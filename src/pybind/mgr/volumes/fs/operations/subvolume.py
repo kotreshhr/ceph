@@ -60,6 +60,8 @@ def remove_subvol(fs, vol_spec, group, subvolname, force=False):
     with open_subvol(fs, vol_spec, group, subvolname, need_complete=nc_flag) as subvolume:
         if subvolume.list_snapshots():
             raise VolumeException(-errno.ENOTEMPTY, "subvolume '{0}' has snapshots".format(subvolname))
+        if subvolume.has_pending_clones():
+            raise VolumeException(-errno.ENOTEMPTY, "subvolume '{0}' has pending clones".format(subvolname))
         subvolume.remove()
 
 @contextmanager

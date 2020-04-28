@@ -62,7 +62,7 @@ def set_clone_state(volume_client, volname, groupname, subvolname, state):
 
 def get_clone_source(clone_subvolume):
     source = clone_subvolume._get_clone_source()
-    return (source['volume'], source.get('group', None), source['subvolume'], source['snapshot'])
+    return (source['volume'], source.get('group', None), source['subvolume'], source.get('snapshot', None))
 
 def handle_clone_pending(volume_client, volname, index, groupname, subvolname, should_cancel):
     try:
@@ -150,7 +150,10 @@ def do_clone(volume_client, volname, groupname, subvolname, should_cancel):
         with open_at_group(volume_client, fs_handle, groupname, subvolname) as clone_subvolume:
             s_volname, s_groupname, s_subvolname, s_snapname = get_clone_source(clone_subvolume)
             with open_at_group(volume_client, fs_handle, s_groupname, s_subvolname) as source_subvolume:
-                src_path = source_subvolume.snapshot_path(s_snapname)
+                if s_snapname:
+                    src_path = source_subvolume.snapshot_path(s_snapname)
+                else:
+                    src_path = source_subvolume.path
                 dst_path = clone_subvolume.path
                 bulk_copy(fs_handle, src_path, dst_path, should_cancel)
 
@@ -172,9 +175,15 @@ def handle_clone_failed(volume_client, volname, index, groupname, subvolname, sh
             with open_at_group(volume_client, fs_handle, groupname, subvolname) as clone_subvolume:
                 s_volname, s_groupname, s_subvolname, s_snapname = get_clone_source(clone_subvolume)
                 with open_at_group(volume_client, fs_handle, s_groupname, s_subvolname) as source_subvolume:
-                    source_subvolume.detach_snapshot(s_snapname, index)
+                    if s_snapname:
+                        source_subvolume.detach_snapshot(s_snapname, index)
+                    else:
+                        source_subvolume.detach_subvol(index)
     except (MetadataMgrException, VolumeException) as e:
-        log.error("failed to detach clone from snapshot: {0}".format(e))
+        if s_snapname:
+            log.error("failed to detach clone from snapshot: {0}".format(e))
+        else:
+            log.error("failed to detach clone from subvol: {0}".format(e))
     return (None, True)
 
 def handle_clone_complete(volume_client, volname, index, groupname, subvolname, should_cancel):
@@ -183,7 +192,10 @@ def handle_clone_complete(volume_client, volname, index, groupname, subvolname, 
             with open_at_group(volume_client, fs_handle, groupname, subvolname) as clone_subvolume:
                 s_volname, s_groupname, s_subvolname, s_snapname = get_clone_source(clone_subvolume)
                 with open_at_group(volume_client, fs_handle, s_groupname, s_subvolname) as source_subvolume:
-                    source_subvolume.detach_snapshot(s_snapname, index)
+                    if s_snapname:
+                        source_subvolume.detach_snapshot(s_snapname, index)
+                    else:
+                        source_subvolume.detach_subvol(index)
                     clone_subvolume.remove_clone_source(flush=True)
     except (MetadataMgrException, VolumeException) as e:
         log.error("failed to detach clone from snapshot: {0}".format(e))
@@ -254,13 +266,16 @@ class Cloner(AsyncJobs):
 
         s_groupname = status['source'].get('group', None)
         s_subvolname = status['source']['subvolume']
-        s_snapname = status['source']['snapshot']
+        s_snapname = status['source'].get('snapshot', None)
 
         with open_group(fs_handle, self.vc.volspec, s_groupname) as s_group:
             with open_subvol(fs_handle, self.vc.volspec, s_group, s_subvolname) as s_subvolume:
                 next_state = OpSm.get_next_state("clone", clone_state, -errno.EINTR)
                 clone_subvolume.state = (next_state, True)
-                s_subvolume.detach_snapshot(s_snapname, track_idx.decode('utf-8'))
+                if s_snapname:
+                    s_subvolume.detach_snapshot(s_snapname, track_idx.decode('utf-8'))
+                else:
+                    s_subvolume.detach_subvol(track_idx.decode('utf-8'))
 
     def cancel_job(self, volname, job):
         """

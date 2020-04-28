@@ -207,6 +207,17 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             'perm': 'rw'
         },
         {
+            'cmd': 'fs subvolume clone '
+                   'name=vol_name,type=CephString '
+                   'name=sub_name,type=CephString '
+                   'name=target_sub_name,type=CephString '
+                   'name=pool_layout,type=CephString,req=false '
+                   'name=group_name,type=CephString,req=false '
+                   'name=target_group_name,type=CephString,req=false ',
+            'desc': "Clone a subvolume to target subvolume",
+            'perm': 'rw'
+        },
+        {
             'cmd': 'fs clone status '
                    'name=vol_name,type=CephString '
                    'name=clone_name,type=CephString '
@@ -408,6 +419,12 @@ class Module(orchestrator.OrchestratorClientMixin, MgrModule):
             vol_name=cmd['vol_name'], sub_name=cmd['sub_name'], snap_name=cmd['snap_name'],
             group_name=cmd.get('group_name', None), pool_layout=cmd.get('pool_layout', None),
             target_sub_name=cmd['target_sub_name'], target_group_name=cmd.get('target_group_name', None))
+
+    def _cmd_fs_subvolume_clone(self, inbuf, cmd):
+        return self.vc.clone_subvolume(
+            vol_name=cmd['vol_name'], sub_name=cmd['sub_name'], group_name=cmd.get('group_name', None),
+            pool_layout=cmd.get('pool_layout', None), target_sub_name=cmd['target_sub_name'],
+            target_group_name=cmd.get('target_group_name', None))
 
     def _cmd_fs_clone_status(self, inbuf, cmd):
         return self.vc.clone_status(

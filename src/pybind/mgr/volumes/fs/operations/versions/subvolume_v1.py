@@ -63,13 +63,14 @@ class SubvolumeV1(SubvolumeBase, SubvolumeTemplate):
                 e = VolumeException(-e.args[0], e.args[1])
             raise e
 
-    def add_clone_source(self, volname, subvolume, snapname, flush=False):
+    def add_clone_source(self, volname, subvolume, snapname=None, flush=False):
         self.metadata_mgr.add_section("source")
         self.metadata_mgr.update_section("source", "volume", volname)
         if not subvolume.group.is_default_group():
             self.metadata_mgr.update_section("source", "group", subvolume.group_name)
         self.metadata_mgr.update_section("source", "subvolume", subvolume.subvol_name)
-        self.metadata_mgr.update_section("source", "snapshot", snapname)
+        if snapname:
+            self.metadata_mgr.update_section("source", "snapshot", snapname)
         if flush:
             self.metadata_mgr.flush()
 
@@ -143,9 +144,15 @@ class SubvolumeV1(SubvolumeBase, SubvolumeTemplate):
             clone_source = {
                 'volume'   : self.metadata_mgr.get_option("source", "volume"),
                 'subvolume': self.metadata_mgr.get_option("source", "subvolume"),
-                'snapshot' : self.metadata_mgr.get_option("source", "snapshot"),
             }
 
+            try:
+                clone_source["snapshot"] = self.metadata_mgr.get_option("source", "snapshot")
+            except MetadataMgrException as me:
+                if me.errno == -errno.ENOENT:
+                    pass
+                else:
+                    raise
             try:
                 clone_source["group"] = self.metadata_mgr.get_option("source", "group")
             except MetadataMgrException as me:
@@ -208,9 +215,17 @@ class SubvolumeV1(SubvolumeBase, SubvolumeTemplate):
         else:
             return True
 
-    def has_pending_clones(self, snapname):
+    def snap_has_pending_clones(self, snapname):
         try:
             return self.metadata_mgr.section_has_item('clone snaps', snapname)
+        except MetadataMgrException as me:
+            if me.errno == -errno.ENOENT:
+                return False
+            raise
+
+    def has_pending_clones(self):
+        try:
+            return self.metadata_mgr.section_has_item('clone subvols', self.subvolname)
         except MetadataMgrException as me:
             if me.errno == -errno.ENOENT:
                 return False
@@ -261,7 +276,7 @@ class SubvolumeV1(SubvolumeBase, SubvolumeTemplate):
             raise VolumeException(-errno.ENOENT, "snapshot '{0}' does not exist".format(snapname))
         if not self.is_snapshot_protected(snapname):
             raise VolumeException(-errno.EEXIST, "snapshot '{0}' is not protected".format(snapname))
-        if self.has_pending_clones(snapname):
+        if self.snap_has_pending_clones(snapname):
             raise VolumeException(-errno.EEXIST, "snapshot '{0}' has pending clones".format(snapname))
         self._unprotect_snapshot(snapname)
 
@@ -298,3 +313,31 @@ class SubvolumeV1(SubvolumeBase, SubvolumeTemplate):
         except (IndexException, MetadataMgrException) as e:
             log.warn("error delining snapshot from clone: {0}".format(e))
             raise VolumeException(-errno.EINVAL, "error delinking snapshot from clone")
+
+    def _add_subvol_clone(self, track_id):
+        self.metadata_mgr.add_section("clone subvols")
+        self.metadata_mgr.update_section("clone subvols", track_id, self.subvolname)
+        self.metadata_mgr.flush()
+
+    def _remove_subvol_clone(self, track_id):
+        self.metadata_mgr.remove_option("clone subvols", track_id)
+        self.metadata_mgr.flush()
+
+    def attach_subvol(self, tgt_subvolume):
+        try:
+            create_clone_index(self.fs, self.vol_spec)
+            with open_clone_index(self.fs, self.vol_spec) as index:
+                track_idx = index.track(tgt_subvolume.base_path)
+                self._add_subvol_clone(track_idx)
+        except (IndexException, MetadataMgrException) as e:
+            log.warn("error creating clone index: {0}".format(e))
+            raise VolumeException(-errno.EINVAL, "error cloning subvolume")
+
+    def detach_subvol(self, track_id):
+        try:
+            with open_clone_index(self.fs, self.vol_spec) as index:
+                index.untrack(track_id)
+                self._remove_subvol_clone(track_id)
+        except (IndexException, MetadataMgrException) as e:
+            log.warn("error delining subvol from clone: {0}".format(e))
+            raise VolumeException(-errno.EINVAL, "error delinking subvols from clone")

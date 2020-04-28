@@ -336,7 +336,10 @@ class VolumeClient(CephfsClient):
         create_clone(fs_handle, self.volspec, target_group, target_subvolname, target_pool, volname, subvolume, snapname)
         with open_subvol(fs_handle, self.volspec, target_group, target_subvolname, need_complete=False) as target_subvolume:
             try:
-                subvolume.attach_snapshot(snapname, target_subvolume)
+                if snapname:
+                    subvolume.attach_snapshot(snapname, target_subvolume)
+                else:
+                    subvolume.attach_subvol(target_subvolume)
                 self.cloner.queue_job(volname)
             except VolumeException as ve:
                 try:
@@ -380,6 +383,38 @@ class VolumeClient(CephfsClient):
                 with open_group(fs_handle, self.volspec, groupname) as group:
                     with open_subvol(fs_handle, self.volspec, group, subvolname) as subvolume:
                         self._clone_subvolume_snapshot(fs_handle, volname, subvolume, **kwargs)
+        except VolumeException as ve:
+            ret = self.volume_exception_to_retval(ve)
+        return ret
+
+    def _clone_subvolume(self, fs_handle, volname, subvolume, **kwargs):
+        target_pool       = kwargs['pool_layout']
+        target_subvolname = kwargs['target_sub_name']
+        target_groupname  = kwargs['target_group_name']
+
+        # TODO: when the target group is same as source, reuse group object.
+        with open_group(fs_handle, self.volspec, target_groupname) as target_group:
+            try:
+                with open_subvol(fs_handle, self.volspec, target_group, target_subvolname, need_complete=False):
+                    raise VolumeException(-errno.EEXIST, "subvolume '{0}' exists".format(target_subvolname))
+            except VolumeException as ve:
+                if ve.errno == -errno.ENOENT:
+                    self._prepare_clone_subvolume(fs_handle, volname, subvolume, None,
+                                                  target_group, target_subvolname, target_pool)
+                else:
+                    raise
+
+    def clone_subvolume(self, **kwargs):
+        ret        = 0, "", ""
+        volname    = kwargs['vol_name']
+        subvolname = kwargs['sub_name']
+        groupname  = kwargs['group_name']
+
+        try:
+            with open_volume(self, volname) as fs_handle:
+                with open_group(fs_handle, self.volspec, groupname) as group:
+                    with open_subvol(fs_handle, self.volspec, group, subvolname) as subvolume:
+                        self._clone_subvolume(fs_handle, volname, subvolume, **kwargs)
         except VolumeException as ve:
             ret = self.volume_exception_to_retval(ve)
         return ret

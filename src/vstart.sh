@@ -607,6 +607,7 @@ prepare_conf() {
         mon osd full ratio = .99
         mon osd nearfull ratio = .99
         mon osd backfillfull ratio = .99
+        client check pool perm = false
         mon_max_pg_per_osd = ${MON_MAX_PG_PER_OSD:-1000}
         erasure code dir = $EC_PATH
         plugin dir = $CEPH_LIB
@@ -659,6 +660,7 @@ EOF
         bluestore_spdk_mem = 2048"
         else
             BLUESTORE_OPTS="        bluestore block db path = $CEPH_DEV_DIR/osd\$id/block.db.file
+        bluestore block size = 10737418240
         bluestore block db size = 1073741824
         bluestore block db create = true
         bluestore block wal path = $CEPH_DEV_DIR/osd\$id/block.wal.file

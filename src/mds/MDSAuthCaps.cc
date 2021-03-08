@@ -271,6 +271,12 @@ bool MDSAuthCaps::is_capable(std::string_view inode_path,
         }
       }
 
+      if (mask & MAY_FULL) {
+        if (!grant.spec.allow_full()) {
+          continue;
+        }
+      }
+
       // check unix permissions?
       if (grant.match.uid == MDSCapMatch::MDS_AUTH_UID_ANY) {
         return true;
@@ -411,6 +417,9 @@ ostream &operator<<(ostream &out, const MDSCapSpec &spec)
     }
     if (spec.allow_write()) {
       out << "w";
+    }
+    if (spec.allow_full()) {
+      out << "f";
     }
     if (spec.allow_set_vxattr()) {
       out << "p";

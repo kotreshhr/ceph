@@ -2511,19 +2511,25 @@ void Server::dispatch_client_request(MDRequestRef& mdr)
   }
   
   if (is_full) {
-    if (req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
-        req->get_op() == CEPH_MDS_OP_SETDIRLAYOUT ||
-        req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
-        req->get_op() == CEPH_MDS_OP_RMXATTR ||
-        req->get_op() == CEPH_MDS_OP_SETXATTR ||
-        req->get_op() == CEPH_MDS_OP_CREATE ||
-        req->get_op() == CEPH_MDS_OP_SYMLINK ||
-        req->get_op() == CEPH_MDS_OP_MKSNAP ||
-	((req->get_op() == CEPH_MDS_OP_LINK ||
-	  req->get_op() == CEPH_MDS_OP_RENAME) &&
-	 (!mdr->has_more() || mdr->more()->witnessed.empty())) // haven't started peer request
+    CInode *cur = try_get_auth_inode(mdr, req->get_filepath().get_ino());
+    if (!cur) {
+      respond_to_request(mdr, -EINVAL);
+      return;
+    }
+    if (check_access(mdr, cur, MAY_FULL)) {
+      dout(20) << __func__ << ": full, has FULL caps, permitting op " << ceph_mds_op_name(req->get_op()) << dendl;
+    } else if (req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
+      req->get_op() == CEPH_MDS_OP_SETDIRLAYOUT ||
+      req->get_op() == CEPH_MDS_OP_SETLAYOUT ||
+      req->get_op() == CEPH_MDS_OP_RMXATTR ||
+      req->get_op() == CEPH_MDS_OP_SETXATTR ||
+      req->get_op() == CEPH_MDS_OP_CREATE ||
+      req->get_op() == CEPH_MDS_OP_SYMLINK ||
+      req->get_op() == CEPH_MDS_OP_MKSNAP ||
+      ((req->get_op() == CEPH_MDS_OP_LINK ||
+        req->get_op() == CEPH_MDS_OP_RENAME) &&
+       (!mdr->has_more() || mdr->more()->witnessed.empty())) // haven't started peer request
 	) {
-
       dout(20) << __func__ << ": full, responding CEPHFS_ENOSPC to op " << ceph_mds_op_name(req->get_op()) << dendl;
       respond_to_request(mdr, -CEPHFS_ENOSPC);
       return;

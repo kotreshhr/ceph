@@ -4,7 +4,7 @@ import stat
 import errno
 import logging
 from hashlib import md5
-from typing import Dict, Union
+from typing import Dict, Union, Optional
 
 import cephfs
 
@@ -126,6 +126,16 @@ class SubvolumeBase(object):
     def purgeable(self):
         """ Boolean declaring if subvolume can be purged """
         raise NotImplementedError
+
+    @property
+    def group_quota(self):
+        group_quota = None # type: Optional[int]
+        try:
+            group_quota = int(self.fs.getxattr(self.group.path,
+                             'ceph.quota.max_bytes').decode('utf-8'))
+        except cephfs.NoData:
+            pass
+        return group_quota
 
     def load_config(self):
         if self.legacy_mode:

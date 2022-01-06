@@ -70,28 +70,11 @@ class SubvolumeV2(SubvolumeV1):
     @property
     def has_pending_purges(self):
         try:
-            return not listdir(self.fs, self.trash_dir) == []
+            return not listdir(self.fs, self.trash_dir()) == []
         except VolumeException as ve:
             if ve.errno == -errno.ENOENT:
                 return False
             raise
-
-    @property
-    def trash_dir(self):
-        return os.path.join(self.base_path, b".trash")
-
-    def create_trashcan(self):
-        """per subvolume trash directory"""
-        try:
-            self.fs.stat(self.trash_dir)
-        except cephfs.Error as e:
-            if e.args[0] == errno.ENOENT:
-                try:
-                    self.fs.mkdir(self.trash_dir, 0o700)
-                except cephfs.Error as ce:
-                    raise VolumeException(-ce.args[0], ce.args[1])
-            else:
-                raise VolumeException(-e.args[0], e.args[1])
 
     def mark_subvolume(self):
         # set subvolume attr, on subvolume root, marking it as a CephFS subvolume
@@ -334,18 +317,6 @@ class SubvolumeV2(SubvolumeV1):
         except cephfs.Error as e:
             raise VolumeException(-e.args[0], e.args[1])
 
-    def trash_incarnation_dir(self):
-        """rename subvolume (uuid component) to trash"""
-        self.create_trashcan()
-        try:
-            bname = os.path.basename(self.path)
-            tpath = os.path.join(self.trash_dir, bname)
-            log.debug("trash: {0} -> {1}".format(self.path, tpath))
-            self.fs.rename(self.path, tpath)
-            self._link_dir(tpath, bname)
-        except cephfs.Error as e:
-            raise VolumeException(-e.args[0], e.args[1])
-
     @staticmethod
     def safe_to_remove_subvolume_clone(subvol_state):
         # Both the STATE_FAILED and STATE_CANCELED are handled by 'handle_clone_failed' in the state
@@ -365,16 +336,20 @@ class SubvolumeV2(SubvolumeV1):
             if not internal_cleanup and not self.safe_to_remove_subvolume_clone(self.state):
                 raise VolumeException(-errno.EAGAIN,
                                       "{0} clone in-progress -- please cancel the clone and retry".format(self.subvolname))
-            if not self.has_pending_purges:
+            if not self.has_pending_purges and not self.group_quota:
                 self.trash_base_dir()
                 # Delete the volume meta file, if it's not already deleted
                 self.auth_mdata_mgr.delete_subvolume_metadata_file(self.group.groupname, self.subvolname)
                 return
+
         if self.state != SubvolumeStates.STATE_RETAINED:
-            self.trash_incarnation_dir()
-            self.metadata_mgr.update_global_section(MetadataManager.GLOBAL_META_KEY_PATH, "")
-            self.metadata_mgr.update_global_section(MetadataManager.GLOBAL_META_KEY_STATE, SubvolumeStates.STATE_RETAINED.value)
-            self.metadata_mgr.flush()
+            self.trash_incarnation_dir(retainsnaps)
+            # Update metadata only for retainsnaps, don't update metadata on subvolume
+            # removal with group quota set, it fails when the group quota is exceeded.
+            if retainsnaps:
+                self.metadata_mgr.update_global_section(MetadataManager.GLOBAL_META_KEY_PATH, "")
+                self.metadata_mgr.update_global_section(MetadataManager.GLOBAL_META_KEY_STATE, SubvolumeStates.STATE_RETAINED.value)
+                self.metadata_mgr.flush()
             # Delete the volume meta file, if it's not already deleted
             self.auth_mdata_mgr.delete_subvolume_metadata_file(self.group.groupname, self.subvolname)
 
@@ -387,7 +362,10 @@ class SubvolumeV2(SubvolumeV1):
     def remove_snapshot(self, snapname):
         super(SubvolumeV2, self).remove_snapshot(snapname)
         if self.purgeable:
-            self.trash_base_dir()
+            if self.group_quota:
+                self.trash_incarnation_dir(retainsnaps=False)
+            else:
+                self.trash_base_dir()
             # tickle the volume purge job to purge this entry, using ESTALE
             raise VolumeException(-errno.ESTALE, "subvolume '{0}' has been removed as the last retained snapshot is removed".format(self.subvolname))
         # if not purgeable, subvol is not retained, or has snapshots, or already has purge jobs that will garbage collect this subvol

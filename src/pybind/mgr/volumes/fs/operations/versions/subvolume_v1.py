@@ -683,12 +683,49 @@ class SubvolumeV1(SubvolumeBase, SubvolumeTemplate):
         if flush:
             self.metadata_mgr.flush()
 
+    def trash_dir(self, retainsnaps=True):
+        if retainsnaps:
+            return os.path.join(self.base_path, b".trash")
+        else:
+            return os.path.join(self.group.path, b".trash")
+
+    def create_trashcan(self, retainsnaps):
+        """per subvolume trash directory"""
+        try:
+            self.fs.stat(self.trash_dir(retainsnaps))
+        except cephfs.Error as e:
+            if e.args[0] == errno.ENOENT:
+                try:
+                    self.fs.mkdir(self.trash_dir(retainsnaps), 0o700)
+                except cephfs.Error as ce:
+                    raise VolumeException(-ce.args[0], ce.args[1])
+            else:
+                raise VolumeException(-e.args[0], e.args[1])
+
+    def trash_incarnation_dir(self, retainsnaps):
+
+        self.create_trashcan(retainsnaps)
+        try:
+            path = self.path if retainsnaps else self.base_path
+            bname = os.path.basename(path)
+            tpath = os.path.join(self.trash_dir(retainsnaps), bname)
+            log.debug("trash: {0} -> {1}".format(path, tpath))
+            self.fs.rename(path, tpath)
+            self._link_dir(tpath, bname)
+        except cephfs.Error as e:
+            raise VolumeException(-e.args[0], e.args[1])
+
     def remove(self, retainsnaps=False):
         if retainsnaps:
             raise VolumeException(-errno.EINVAL, "subvolume '{0}' does not support snapshot retention on delete".format(self.subvolname))
         if self.list_snapshots():
             raise VolumeException(-errno.ENOTEMPTY, "subvolume '{0}' has snapshots".format(self.subvolname))
-        self.trash_base_dir()
+        if self.group_quota:
+            self.trash_incarnation_dir(retainsnaps)
+            # Delete the volume meta file, if it's not already deleted
+            self.auth_mdata_mgr.delete_subvolume_metadata_file(self.group.groupname, self.subvolname)
+        else:
+            self.trash_base_dir()
 
     def resize(self, newsize, noshrink):
         subvol_path = self.path

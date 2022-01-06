@@ -255,6 +255,17 @@ def remove_group(fs, vol_spec, groupname):
     """
     group = Group(fs, vol_spec, groupname)
     try:
+        trash_dir = os.path.join(group.path, b".trash")
+        fs.rmdir(trash_dir)
+    except cephfs.Error as e:
+        if e.args[0] == errno.ENOENT:
+            pass
+        elif e.args[0] == errno.ENOTEMPTY:
+            raise VolumeException(-errno.EAGAIN, "subvolumegroup '{0}', asynchronous purge of subvolumes in progress"
+                                  " Retry after sometime".format(groupname))
+        else:
+            raise VolumeException(-e.args[0], e.args[1])
+    try:
         fs.rmdir(group.path)
     except cephfs.Error as e:
         if e.args[0] == errno.ENOENT:

@@ -1,0 +1,5 @@
+overrides:
+  install:
+    ceph:
+      client.0:
+        tag: v19.2.2

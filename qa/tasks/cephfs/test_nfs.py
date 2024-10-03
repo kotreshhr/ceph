@@ -8,6 +8,7 @@ from io import BytesIO, StringIO
 from tasks.mgr.mgr_test_case import MgrTestCase
 from teuthology import contextutil
 from teuthology.exceptions import CommandFailedError
+from teuthology.orchestra.run import Raw
 
 log = logging.getLogger(__name__)
 
@@ -347,14 +348,14 @@ class TestNFS(MgrTestCase):
         self.ctx.cluster.run(args=['sudo', 'chmod', '1777', '/mnt'])
 
         try:
-            self.ctx.cluster.run(args=['sudo', 'rm', '-rf', '/mnt/*'])
+            self.ctx.cluster.run(args=['sudo', 'rm', '-rf', '/mnt/volumes'])
             self.ctx.cluster.run(args=['touch', '/mnt/test'])
             out_mnt = self._sys_cmd(['ls', '/mnt'])
             self.assertEqual(out_mnt,  b'test\n')
             if datarw:
               self.ctx.cluster.run(args=['echo', 'test data', Raw('|'), 'tee', '/mnt/test1'])
               out_test1 = self._sys_cmd(['cat', '/mnt/test1'])
-              self.assertEqual(out_test1,  b'test data')
+              self.assertEqual(out_test1,  b'test data\n')
         finally:
             self.ctx.cluster.run(args=['sudo', 'umount', '/mnt'])
 

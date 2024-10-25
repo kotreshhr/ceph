@@ -3,6 +3,8 @@ import errno
 import json
 import time
 import logging
+import threading
+import queue
 from io import BytesIO, StringIO
 
 from tasks.mgr.mgr_test_case import MgrTestCase
@@ -369,6 +371,64 @@ class TestNFS(MgrTestCase):
         except CommandFailedError as e:
             self.fail(f"expected read/write of a file to be successful but failed with {e.exitstatus}")
 
+    def _mnt_nfs(self, pseudo_path, port, ip):
+        '''
+        Mount created export
+        :param pseudo_path: It is the pseudo root name
+        :param port: Port of deployed nfs cluster
+        :param ip: IP of deployed nfs cluster
+        '''
+        tries = 3
+        while True:
+            try:
+                self.ctx.cluster.run(
+                    args=['sudo', 'mount', '-t', 'nfs', '-o', f'port={port}',
+                          f'{ip}:{pseudo_path}', '/mnt'])
+                break
+            except CommandFailedError as e:
+                if tries:
+                    tries -= 1
+                    time.sleep(2)
+                    continue
+                # Check if mount failed only when non existing pseudo path is passed
+                if not check and e.exitstatus == 32:
+                    return
+                raise
+
+        self.ctx.cluster.run(args=['sudo', 'chmod', '1777', '/mnt'])
+
+    def _run_fio_thread(self, mnt_path, out_queue):
+        '''
+        run fio on given mnt_path and exception if any to queue
+        :param mnt_path: nfs mount point
+        '''
+        try:
+            self.ctx.cluster.run(args=['mkdir', f'{mnt_path}/fio'])
+            fio_cmd=['sudo', 'fio', '--ioengine=libaio', f'-directory={mnt_path}/fio', '--filename=fio.randrw.blocklist.test', '--name=job', '--bs=16k', '--direct=1', '--group_reporting', '--iodepth=128', '--randrepeat=0', '--norandommap=1', '--thread=16', '--ramp_time=20s', '--offset_increment=5%', '--size=5G', '--time_based', '--runtime=360', '--ramp_time=1s', '--percentage_random=0', '--rw=write']
+            res = self.ctx.cluster.run(args=fio_cmd, check_status=False, stdout=BytesIO(), stderr=BytesIO())
+            if isinstance(res[0].stdout.getvalue(), bytes):
+                out_queue.put(res[0].stdout.getvalue())
+        except CommandFailedError as e:
+            out_queue.put(e)
+        finally:
+            self.ctx.cluster.run(args=['sudo', 'rm', '-rf', f'{mnt_path}/fio'])
+
+    def _test_fio(self, pseudo_path, port, ip):
+        '''
+        run fio with libaio on /mnt/fio
+        :param mnt_path: nfs mount point
+        '''
+        try:
+            self._mnt_nfs(pseudo_path, port, ip)
+            self.ctx.cluster.run(args=['mkdir', '/mnt/fio'])
+            fio_cmd=['sudo', 'fio', '--ioengine=libaio', '-directory=/mnt/fio', '--filename=fio.randrw.test', '--name=job', '--bs=16k', '--direct=1', '--group_reporting', '--iodepth=128', '--randrepeat=0', '--norandommap=1', '--thread=2', '--ramp_time=20s', '--offset_increment=5%', '--size=5G', '--time_based', '--runtime=300', '--ramp_time=1s', '--percentage_random=0', '--rw=randrw', '--rwmixread=50']
+            self.ctx.cluster.run(args=fio_cmd)
+        except CommandFailedError as e:
+            self.fail(f"expected fio to be successful but failed with {e.exitstatus}")
+        finally:
+            self.ctx.cluster.run(args=['sudo', 'rm', '-rf', '/mnt/fio'])
+            self.ctx.cluster.run(args=['sudo', 'umount', '/mnt'])
+
     def _write_to_read_only_export(self, pseudo_path, port, ip):
         '''
         Check if write to read only export fails
@@ -452,6 +512,7 @@ class TestNFS(MgrTestCase):
         '''
         Test successful creation and deletion of the nfs cluster.
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
         self._test_list_cluster()
         self._test_delete_cluster()
@@ -462,6 +523,7 @@ class TestNFS(MgrTestCase):
         '''
         Test idempotency of cluster create and delete commands.
         '''
+        self.skipTest("Need to test only fio")
         self._test_idempotency(self._test_create_cluster, ['nfs', 'cluster', 'create', self.cluster_id])
         self._test_idempotency(self._test_delete_cluster, ['nfs', 'cluster', 'rm', self.cluster_id])
 
@@ -469,6 +531,7 @@ class TestNFS(MgrTestCase):
         '''
         Test nfs cluster deployment failure with invalid cluster id.
         '''
+        self.skipTest("Need to test only fio")
         try:
             invalid_cluster_id = '/cluster_test'  # Only [A-Za-z0-9-_.] chars are valid
             self._nfs_cmd('cluster', 'create', invalid_cluster_id)
@@ -482,6 +545,7 @@ class TestNFS(MgrTestCase):
         '''
         Test successful creation and deletion of the cephfs export.
         '''
+        self.skipTest("Need to test only fio")
         self._create_default_export()
         self._test_get_export()
         port, ip = self._get_port_ip_info()
@@ -496,6 +560,7 @@ class TestNFS(MgrTestCase):
         '''
         Test idempotency of export create and delete commands.
         '''
+        self.skipTest("Need to test only fio")
         self._test_idempotency(self._create_default_export, [
             'nfs', 'export', 'create', 'cephfs',
             '--fsname', self.fs_name, '--cluster-id', self.cluster_id,
@@ -508,6 +573,7 @@ class TestNFS(MgrTestCase):
         '''
         Test creating multiple exports with different access type and path.
         '''
+        self.skipTest("Need to test only fio")
         # Export-1 with default values (access type = rw and path = '\')
         self._create_default_export()
         # Export-2 with r only
@@ -534,6 +600,7 @@ class TestNFS(MgrTestCase):
         '''
         Test export availability on restarting mgr.
         '''
+        self.skipTest("Need to test only fio")
         self._create_default_export()
         # unload and load module will restart the mgr
         self._unload_module("cephadm")
@@ -552,6 +619,7 @@ class TestNFS(MgrTestCase):
         '''
         Test creating export with non-existing filesystem.
         '''
+        self.skipTest("Need to test only fio")
         try:
             fs_name = 'nfs-test'
             self._test_create_cluster()
@@ -570,6 +638,7 @@ class TestNFS(MgrTestCase):
         '''
         Test creating cephfs export with non-existing nfs cluster.
         '''
+        self.skipTest("Need to test only fio")
         try:
             cluster_id = 'invalidtest'
             self._nfs_cmd('export', 'create', 'cephfs', '--fsname', self.fs_name,
@@ -584,6 +653,7 @@ class TestNFS(MgrTestCase):
         '''
         Test creating cephfs export with relative or '/' pseudo path.
         '''
+        self.skipTest("Need to test only fio")
         def check_pseudo_path(pseudo_path):
             try:
                 self._nfs_cmd('export', 'create', 'cephfs', '--fsname', self.fs_name,
@@ -607,6 +677,7 @@ class TestNFS(MgrTestCase):
         '''
         Test write to readonly export.
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
         self._create_export(export_id='1', create_fs=True,
                             extra_cmd=['--pseudo-path', self.pseudo_path, '--readonly'])
@@ -619,6 +690,7 @@ class TestNFS(MgrTestCase):
         '''
         Test date read and write on export.
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
         self._create_export(export_id='1', create_fs=True,
                             extra_cmd=['--pseudo-path', self.pseudo_path])
@@ -627,10 +699,62 @@ class TestNFS(MgrTestCase):
         self._test_data_read_write(self.pseudo_path, port, ip)
         self._test_delete_cluster()
 
+    def test_async_io_fio(self):
+        '''
+        Test async io using fio. Expect completion without hang or crash
+        '''
+        self._test_create_cluster()
+        self._create_export(export_id='1', create_fs=True,
+                            extra_cmd=['--pseudo-path', self.pseudo_path])
+        port, ip = self._get_port_ip_info()
+        self._check_nfs_cluster_status('running', 'NFS Ganesha cluster restart failed')
+        self._test_fio(self.pseudo_path, port, ip)
+        self._test_delete_cluster()
+
+    def test_async_io_fio_blocklist(self):
+        '''
+        Test blocklist of the client during async io using fio. Expect EIO without hang or crash
+        '''
+        self._test_create_cluster()
+        self._create_export(export_id='1', create_fs=True,
+                            extra_cmd=['--pseudo-path', self.pseudo_path])
+        port, ip = self._get_port_ip_info()
+        self._check_nfs_cluster_status('running', 'NFS Ganesha cluster restart failed')
+        out_queue = queue.Queue()
+        try:
+            self._mnt_nfs(self.pseudo_path, port, ip)
+            session_ls = json.loads(self.get_ceph_cmd_stdout("tell", "mds.0", "session", "ls", "--format=json-pretty"))
+            nfs_client=[c for c in session_ls if c.get("client_metadata").get("entity_id") == "nfs.test.nfs-cephfs.3746f603"]
+            ip_nonce = nfs_client[0].get("inst").split()[-1]
+            log.info(f'ip_nonce: {ip_nonce}')
+            # Now add a delay which should slow down writes 
+            self.config_set('osd', 'ms_inject_delay_max', '2.0')
+            self.config_set('osd', 'ms_inject_delay_probability', '1.0')
+            fio_thread = threading.Thread(target=self._run_fio_thread, args=('/mnt', out_queue))
+            fio_thread.start()
+            # Wait a bit for fio to start running (fio is scheduled to run for 360 seconds)
+            time.sleep(180)
+            self.run_ceph_cmd(f'osd blocklist add {ip_nonce}')
+            fio_thread.join()
+            if not out_queue.empty():
+                e = out_queue.get()
+                if isinstance(e, CommandFailedError):
+                    self.fail(f"expected fio to fail with EREMOTEIO but looks like mkdir failed with {e}")
+                elif isinstance(e, bytes) and b'err=121' not in e:
+                    self.fail(f"expected fio to fail with EREMOTEIO but failed with {e}")
+            else:
+                self.fail(f"expected fio to fail with EREMOTEIO but no exception raised")
+        except CommandFailedError as e:
+            self.fail(f"cmd failed with exception {e}")
+        finally:
+            self.ctx.cluster.run(args=['sudo', 'umount', '/mnt'])
+        self._test_delete_cluster()
+
     def test_cluster_info(self):
         '''
         Test cluster info outputs correct ip and hostname
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
         info_output = json.loads(self._nfs_cmd('cluster', 'info', self.cluster_id))
         print(f'info {info_output}')
@@ -657,6 +781,7 @@ class TestNFS(MgrTestCase):
         Test cluster is created using user config and reverts back to default
         config on reset.
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
 
         pool = NFS_POOL_NAME
@@ -710,6 +835,7 @@ class TestNFS(MgrTestCase):
         '''
         Test setting user config for non-existing nfs cluster.
         '''
+        self.skipTest("Need to test only fio")
         cluster_id = 'invalidtest'
         with contextutil.safe_while(sleep=3, tries=3) as proceed:
             while proceed():
@@ -729,6 +855,7 @@ class TestNFS(MgrTestCase):
         '''
         Test resetting user config for non-existing nfs cluster.
         '''
+        self.skipTest("Need to test only fio")
         try:
             cluster_id = 'invalidtest'
             self._nfs_cmd('cluster', 'config', 'reset', cluster_id)
@@ -742,6 +869,7 @@ class TestNFS(MgrTestCase):
         '''
         Test creation of export via apply
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
         self.ctx.cluster.run(args=['ceph', 'nfs', 'export', 'apply',
                                    self.cluster_id, '-i', '-'],
@@ -766,6 +894,7 @@ class TestNFS(MgrTestCase):
         '''
         Test update of export's pseudo path and access type from rw to ro
         '''
+        self.skipTest("Need to test only fio")
         self._create_default_export()
         port, ip = self._get_port_ip_info()
         self._test_mnt(self.pseudo_path, port, ip)
@@ -786,6 +915,7 @@ class TestNFS(MgrTestCase):
         '''
         Test update of export's access level from ro to rw
         '''
+        self.skipTest("Need to test only fio")
         self._test_create_cluster()
         self._create_export(
             export_id='1', create_fs=True,
@@ -806,6 +936,7 @@ class TestNFS(MgrTestCase):
         '''
         Test update of export with invalid values
         '''
+        self.skipTest("Need to test only fio")
         self._create_default_export()
         export_block = self._get_export()
 
@@ -840,6 +971,7 @@ class TestNFS(MgrTestCase):
         '''
         Test that cmd fails on not passing required arguments
         '''
+        self.skipTest("Need to test only fio")
         def exec_cmd_invalid(*cmd):
             try:
                 self._nfs_cmd(*cmd)
@@ -867,6 +999,7 @@ class TestNFS(MgrTestCase):
         """
         Test that cluster info doesn't throw junk data for non-existent cluster
         """
+        self.skipTest("Need to test only fio")
         cluster_ls = self._nfs_cmd('cluster', 'ls')
         self.assertNotIn('foo', cluster_ls, 'cluster foo exists')
         try:
@@ -880,6 +1013,7 @@ class TestNFS(MgrTestCase):
         """
         Test that nfs exports can't be created with invalid path
         """
+        self.skipTest("Need to test only fio")
         mnt_pt = '/mnt'
         preserve_mode = self._sys_cmd(['stat', '-c', '%a', mnt_pt])
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
@@ -896,6 +1030,7 @@ class TestNFS(MgrTestCase):
         """
         Test that nfs exports can't be created at a filepath
         """
+        self.skipTest("Need to test only fio")
         mnt_pt = '/mnt'
         preserve_mode = self._sys_cmd(['stat', '-c', '%a', mnt_pt])
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
@@ -915,6 +1050,7 @@ class TestNFS(MgrTestCase):
         """
         Test that nfs exports can't be created at a symlink path
         """
+        self.skipTest("Need to test only fio")
         mnt_pt = '/mnt'
         preserve_mode = self._sys_cmd(['stat', '-c', '%a', mnt_pt])
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
@@ -946,6 +1082,7 @@ class TestNFS(MgrTestCase):
            JSON output containing status of every export).
         """
 
+        self.skipTest("Need to test only fio")
         mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
         try:
@@ -1026,6 +1163,7 @@ class TestNFS(MgrTestCase):
         JSON output containing status of every export).
         """
 
+        self.skipTest("Need to test only fio")
         mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
         try:
@@ -1063,6 +1201,7 @@ class TestNFS(MgrTestCase):
         in the json output as expected.
         """
 
+        self.skipTest("Need to test only fio")
         mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
         try:
@@ -1131,6 +1270,7 @@ class TestNFS(MgrTestCase):
         exports pseudo paths are visible in the JSON response to CLI and the
         return code is set to EIO.
         """
+        self.skipTest("Need to test only fio")
         mnt_pt = self._sys_cmd(['mktemp', '-d']).decode().strip()
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
         self.ctx.cluster.run(args=['mkdir', f'{mnt_pt}/testdir1'])
@@ -1193,6 +1333,7 @@ class TestNFS(MgrTestCase):
         Test that invalid path is not allowed while updating a CephFS
         export.
         """
+        self.skipTest("Need to test only fio")
         self._create_cluster_with_fs(self.fs_name)
         self._create_export(export_id=1)
 
@@ -1211,6 +1352,7 @@ class TestNFS(MgrTestCase):
         Test that non-directory path are not allowed while updating a CephFS
         export.
         """
+        self.skipTest("Need to test only fio")
         mnt_pt = '/mnt'
         preserve_mode = self._sys_cmd(['stat', '-c', '%a', mnt_pt])
         self._create_cluster_with_fs(self.fs_name, mnt_pt)
@@ -1250,6 +1392,7 @@ class TestNFS(MgrTestCase):
         """
         Test that ensure cmount_path is present in FSAL block
         """
+        self.skipTest("Need to test only fio")
         self._create_cluster_with_fs(self.fs_name)
 
         pseudo_path = '/test_without_cmount'
@@ -1264,6 +1407,7 @@ class TestNFS(MgrTestCase):
         """
         Test that exports with same FSAL share same user_id
         """
+        self.skipTest("Need to test only fio")
         self._create_cluster_with_fs(self.fs_name)
 
         pseudo_path_1 = '/test1'

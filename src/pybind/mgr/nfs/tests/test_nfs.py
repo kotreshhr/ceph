@@ -50,6 +50,12 @@ EXPORT {
         Squash = All;
         Access_Type = RO;
     }
+
+    LOG {
+        COMPONENTS {
+            FSAL = FULL_DEBUG;
+        }
+    }
 }
 """
 
@@ -70,6 +76,12 @@ EXPORT
         Access_Key_Id ="the_access_key";
         Secret_Access_Key = "the_secret_key";
     }
+
+    LOG {
+        COMPONENTS {
+            FSAL = FULL_DEBUG;
+        }
+    }
 }
 """
     export_3 = """
@@ -88,6 +100,11 @@ EXPORT {
     security_label = true;
     protocols = 4;
     transports = "TCP";
+    LOG {
+        COMPONENTS {
+            FSAL = FULL_DEBUG;
+        }
+    }
 }
 """
     export_4 = """
@@ -107,6 +124,11 @@ EXPORT {
     security_label = true;
     protocols = 4;
     transports = "TCP";
+    LOG {
+        COMPONENTS {
+            FSAL = FULL_DEBUG;
+        }
+    }
 }
 """
     export_5 = """
@@ -125,6 +147,11 @@ EXPORT {
         User_Id = "nfs.foo.b.lgudhr";
         Secret_Access_Key = "YOUR SECRET KEY HERE";
         cmount_path = "/";
+    }
+    LOG {
+        COMPONENTS {
+            FSAL = FULL_DEBUG;
+        }
     }
 }
 """

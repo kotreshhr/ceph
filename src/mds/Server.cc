@@ -7755,9 +7755,11 @@ void Server::_link_remote(const MDRequestRef& mdr, bool inc, CDentry *dn, CInode
     version_t dnpv = dn->pre_dirty();
 
     //referent inode stuff
-    auto _inode = newi->_get_inode();
-    _inode->version = dnpv;
-    _inode->update_backtrace();
+    if (newi) {
+      auto _inode = newi->_get_inode();
+      _inode->version = dnpv;
+      _inode->update_backtrace();
+    }
 
     mdcache->predirty_journal_parents(mdr, &le->metablob, targeti, dn->get_dir(), PREDIRTY_DIR, 1);
 

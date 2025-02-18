@@ -585,7 +585,7 @@ void StrayManager::eval_remote(CDentry *remote_dn)
   dout(10) << __func__ << " " << *remote_dn << dendl;
 
   CDentry::linkage_t *dnl = remote_dn->get_projected_linkage();
-  ceph_assert(dnl->is_remote() || dnl->is_referent());
+  ceph_assert(dnl->is_remote() || dnl->is_referent_remote());
   CInode *in = dnl->get_inode();
 
   if (!in) {
@@ -616,7 +616,7 @@ class C_RetryEvalRemote : public StrayManagerContext {
       dn->get(CDentry::PIN_PTRWAITER);
     }
     void finish(int r) override {
-      if (dn->get_projected_linkage()->is_remote() || dn->get_projected_linkage()->is_referent())
+      if (dn->get_projected_linkage()->is_remote() || dn->get_projected_linkage()->is_referent_remote())
 	sm->eval_remote(dn);
       dn->put(CDentry::PIN_PTRWAITER);
     }

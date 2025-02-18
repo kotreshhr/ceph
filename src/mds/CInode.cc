@@ -1430,7 +1430,7 @@ void CInode::_store_backtrace(std::vector<CInodeCommitOperation> &ops_vec,
   }
 
   inodeno_t remote_inode = 0;
-  if (is_referent())
+  if (is_referent_remote())
     remote_inode = get_remote_ino();
 
   ops_vec.emplace_back(op_prio, pool, get_inode()->layout,

@@ -117,7 +117,7 @@ public:
       first(f), alternate_name(altn), ino(pi), remote_ino(ri), referent_ino(ref_ino),remote_d_type(rdt), nonce(n), lock(l) {}
     bool is_primary() const { return ino > 0; }
     bool is_remote() const { return remote_ino > 0; }
-    bool is_referent() const { return remote_ino > 0 && referent_ino > 0; }
+    bool is_referent_remote() const { return remote_ino > 0 && referent_ino > 0; }
     bool is_null() const { return ino == 0 && remote_ino == 0; }
     void encode(ceph::buffer::list &bl) const {
       using ceph::encode;

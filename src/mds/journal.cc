@@ -1510,7 +1510,7 @@ void EMetaBlob::replay(MDSRank *mds, LogSegment *logseg, int type, MDPeerUpdate 
 	  mds->mdcache->add_inode(ref_in);
           dout(10) << "EMetaBlob.replay referent inode created for dn " << *dn << " inode " << *ref_in << " ref ino " << rb.referent_ino << dendl;
 	  if (!dn->get_linkage()->is_null()) {
-	    if (dn->get_linkage()->is_referent()) {
+	    if (dn->get_linkage()->is_referent_remote()) {
 	      unlinked[dn->get_linkage()->get_referent_inode()] = dir;
 	      CachedStackStringStream css;
 	      *css << "EMetaBlob.replay FIXME had dentry linked to wrong referent inode " << *dn
@@ -1536,7 +1536,7 @@ void EMetaBlob::replay(MDSRank *mds, LogSegment *logseg, int type, MDPeerUpdate 
 	  }
 	  if (dn->get_linkage()->get_inode() != ref_in) {
 	    if (!dn->get_linkage()->is_null()) { // note: might be remote.  as with stray reintegration.
-	      if (dn->get_linkage()->is_referent()) {
+	      if (dn->get_linkage()->is_referent_remote()) {
 	        unlinked[dn->get_linkage()->get_referent_inode()] = dir;
 	        CachedStackStringStream css;
 	        *css << "EMetaBlob.replay FIXME had dentry linked to wrong referent inode " << *dn

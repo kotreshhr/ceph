@@ -921,7 +921,7 @@ void Migrator::maybe_split_export(CDir* dir, uint64_t max_size, bool null_okay,
 	dirfrag_size += null_size;
 	continue;
       }
-      if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent()) {
+      if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent_remote()) {
 	dirfrag_size += remote_size;
 	continue;
       }
@@ -1822,7 +1822,7 @@ void Migrator::encode_export_dir(bufferlist& exportbl,
       continue;
     }
 
-    if (dn->get_linkage()->is_referent()) {
+    if (dn->get_linkage()->is_referent_remote()) {
       // referent inode
       exportbl.append("r", 1);    // inode dentry
       ENCODE_START(2, 1, exportbl);
@@ -1898,7 +1898,7 @@ void Migrator::finish_export_dir(CDir *dir, mds_rank_t peer,
       // subdirs?
       auto&& dirs = in->get_nested_dirfrags();
       subdirs.insert(std::end(subdirs), std::begin(dirs), std::end(dirs));
-    } else if (dn->get_linkage()->is_referent()) { //referent inode ?
+    } else if (dn->get_linkage()->is_referent_remote()) { //referent inode ?
       CInode *ref_in = dn->get_linkage()->get_referent_inode();
       finish_export_inode(ref_in, peer, peer_imported[ref_in->ino()], finished);
     }

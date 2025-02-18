@@ -250,7 +250,7 @@ bool CDir::check_rstats(bool scrub)
 	frag_info.nsubdirs++;
       else
 	frag_info.nfiles++;
-    } else if (dnl->is_remote() || dnl->is_referent())
+    } else if (dnl->is_remote() || dnl->is_referent_remote())
       frag_info.nfiles++;
   }
 
@@ -343,7 +343,7 @@ void CDir::adjust_dentry_lru(CDentry *dn)
   bool bottom_lru;
   if (dn->get_linkage()->is_primary()) {
     bottom_lru = !is_auth() && inode->is_stray();
-  } else if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent()) {
+  } else if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent_remote()) {
     bottom_lru = false;
   } else {
     bottom_lru = !is_auth();
@@ -762,7 +762,7 @@ void CDir::unlink_inode_work(CDentry *dn)
       dn->unlink_remote(dn->get_linkage());
 
     dn->get_linkage()->set_remote(0, 0);
-  } else if(dn->get_linkage()->is_referent()) {
+  } else if(dn->get_linkage()->is_referent_remote()) {
     // referent remote
       CInode *ref_in = dn->get_linkage()->get_referent_inode();
       // referent inode - unpin dentry?
@@ -981,7 +981,7 @@ void CDir::steal_dentry(CDentry *dn)
       // move dirty inode rstat to new dirfrag
       if (in->is_dirty_rstat())
 	dirty_rstat_inodes.push_back(&in->dirty_rstat_item);
-    } else if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent()) {
+    } else if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent_remote()) {
       if (dn->get_linkage()->get_remote_d_type() == DT_DIR)
 	_fnode->fragstat.nsubdirs++;
       else
@@ -1982,12 +1982,12 @@ CDentry *CDir::_load_dentry(
     if (dn) {
       CDentry::linkage_t *dnl = dn->get_linkage();
       dout(12) << "_fetched had " << (dnl->is_null() ? "NEG" : "") << " dentry " << *dn << dendl;
-      if (dnl->is_referent()) {
+      if (dnl->is_referent_remote()) {
 	CInode *ref_in = dnl->get_referent_inode();
 	if (ref_in->state_test(CInode::STATE_REJOINUNDEF)) {
 	  undef_inode = true;
         } else if (committed_version == 0 &&
-                   dnl->is_referent() &&
+                   dnl->is_referent_remote() &&
                    dn->is_dirty() &&
                    remote_ino == dnl->get_remote_ino() &&
                    d_type == dnl->get_remote_d_type() &&
@@ -2695,7 +2695,7 @@ void CDir::_omap_commit_ops(int r, int op_prio, int64_t metapool, version_t vers
     if (item.is_remote) {
       // remote link
       CDentry::encode_remote(item.ino, item.d_type, item.alternate_name, bl);
-    } else if (item.is_referent) {
+    } else if (item.is_referent_remote) {
       // marker, name, inode, [symlink string]
       bl.append('r');         // inode
 
@@ -2850,9 +2850,9 @@ void CDir::_parse_dentry(CDentry *dn, dentry_commit_item &item,
     item.ino = linkage.get_remote_ino();
     item.d_type = linkage.get_remote_d_type();
     dout(14) << " dn '" << dn->get_name() << "' remote ino " << item.ino << dendl;
-  } else if (linkage.is_referent()) {
+  } else if (linkage.is_referent_remote()) {
     // referent link
-    item.is_referent = true;
+    item.is_referent_remote = true;
     item.ino = linkage.get_remote_ino();
     item.d_type = linkage.get_remote_d_type();
 
@@ -3005,7 +3005,7 @@ void CDir::_committed(int r, version_t v)
     ++p;
     
     // referent inode
-    if (dn->linkage.is_referent()) {
+    if (dn->linkage.is_referent_remote()) {
       CInode *in = dn->linkage.get_referent_inode();
       ceph_assert(in);
       ceph_assert(in->is_auth());
@@ -3459,7 +3459,7 @@ void CDir::verify_fragstat()
       else
 	c.nfiles++;
     }
-    if (dn->is_remote() || dn->is_referent()) {
+    if (dn->is_remote() || dn->is_referent_remote()) {
       if (dn->get_remote_d_type() == DT_DIR)
 	c.nsubdirs++;
       else

@@ -602,20 +602,29 @@ void CDir::link_null_referent_inode(CDentry *dn, inodeno_t referent_ino, inodeno
  * The linking fun - It can be done in following different ways
  *   1. add_remote_dentry()
  *           - single step, if referent CInode is available and dentry needs to be created.
- *   2. add_null_dentry() -> link_referent_inode()
- *           - two step, if referent CInode is not available and dentry needs to be created.
- *   3. link_null_referent_inode() -> link_referent_inode()
- *           - two step, if referent CInode is not available and dentry exists
- *          usually in decode_replica_dentry() followed by decode_replica_inode()
+ *   2. link_referent_inode()
+ *           - if referent CInode is available and dentry needs to be created, usually in
+ *           referent inode creation phase.
+ *           e.g., pop_projected_linkage() preceded by push_projected_linkage()
+ *   3. add_null_dentry() -> link_referent_inode()
+ *           - two step, if referent CInode is not available and dentry needs to be created,
+ *           usually in journal replay.
+ *   4. link_null_referent_inode() -> link_referent_inode()
+ *           - two step, if referent CInode is not available and dentry exists, usually in
+ *           migration.
+ *           e.g., decode_replica_dentry() followed by decode_replica_inode()
  */
 void CDir::link_referent_inode(CDentry *dn, CInode *ref_in, inodeno_t rino, unsigned char d_type)
 {
+  ceph_assert(ref_in);
   dout(12) << __func__ << " " << *dn << " remote " << rino << " referent inode " << *ref_in << dendl;
-  // The link_referent_inode could be called either after add_null_dentry or link_null_referent_inode.
+
+  // The link_referent_inode could be called after add_null_dentry or link_null_referent_inode.
+  // So linkage need not be always null
   ceph_assert(dn->get_linkage()->is_null() || dn->get_linkage()->get_referent_ino() > 0);
   ceph_assert(!dn->get_linkage()->get_referent_inode());
 
-  // If remote is set, remote is written to backend instead of CInode created.
+  // set linkage
   dn->get_linkage()->set_remote(rino, d_type);
   dn->get_linkage()->referent_inode = ref_in;
   dn->get_linkage()->referent_ino = ref_in->ino();
@@ -1969,7 +1978,6 @@ CDentry *CDir::_load_dentry(
     referent_ino = inode_data.inode->ino;
     d_type = IFTODT(inode_data.inode->mode);
 
-    //TODO - Referent CInode is not loaded.
     if (stale) {
       if (!dn) {
         stale_items.insert(mempool::mds_co::string(key));
@@ -1981,7 +1989,7 @@ CDentry *CDir::_load_dentry(
     bool undef_inode = false;
     if (dn) {
       CDentry::linkage_t *dnl = dn->get_linkage();
-      dout(12) << "_fetched had " << (dnl->is_null() ? "NEG" : "") << " dentry " << *dn << dendl;
+      dout(12) << __func__ << "_fetched had " << (dnl->is_null() ? "NEG" : "") << " dentry " << *dn << dendl;
       if (dnl->is_referent_remote()) {
 	CInode *ref_in = dnl->get_referent_inode();
 	if (ref_in->state_test(CInode::STATE_REJOINUNDEF)) {
@@ -1996,13 +2004,13 @@ CDentry *CDir::_load_dentry(
 		   referent_ino == ref_in->ino() &&
 		   inode_data.inode->version == ref_in->get_version()) {
          // see comment below
-         dout(10) << "_fetched  had underwater dentry " << *dn << ", marking clean" << dendl;
+         dout(10) << __func__ << "_fetched  had underwater dentry " << *dn << ", marking clean" << dendl;
          dn->mark_clean();
-	 dout(10) << "_fetched  had underwater referent inode " << *dnl->get_referent_inode() << ", marking clean" << dendl;
+	 dout(10) << __func__ << "_fetched  had underwater referent inode " << *dnl->get_referent_inode() << ", marking clean" << dendl;
 	 ref_in->mark_clean();
        }
      } else {
-         dout(10) << "_fetched  dentry was present but dnl is not referent!!! " << *dn << dendl;
+         dout(10) << __func__ << "_fetched  dentry was present but dnl is not referent!!! " << *dn << dendl;
      }
    }
 
@@ -2034,12 +2042,12 @@ CDentry *CDir::_load_dentry(
           ref_in->purge_stale_snap_data(*snaps);
 
         if (!undef_inode) {
-          dout(15) << "_fetched  referent inode created " << *ref_in << " parent " << ref_in->parent << dendl;
+          dout(15) << __func__ << "_fetched  referent inode created " << *ref_in << " parent " << ref_in->parent << dendl;
           mdcache->add_inode(ref_in); // add
           mdcache->insert_taken_inos(ref_in->ino());
           dn = add_remote_dentry(dname, ref_in, remote_ino, d_type, std::move(alternate_name), first, last);
         } else {
-          dout(15) << "_fetched  referent inode found in memory " << *ref_in << " parent " << ref_in->parent << dendl;
+          dout(15) << __func__ << "_fetched  referent inode found in memory " << *ref_in << " parent " << ref_in->parent << dendl;
         }
 
         ref_in->maybe_ephemeral_rand(rand_threshold);
@@ -2049,12 +2057,12 @@ CDentry *CDir::_load_dentry(
         if (remote_in) {
 	  //referent_inode is already linked above in add_remote_dentry
           dn->link_remote(dn->get_linkage(), remote_in, ref_in);
-          dout(12) << "_fetched  got remote link " << remote_ino << " which we have " << *remote_in << dendl;
+          dout(12) << __func__ << "_fetched  got remote link " << remote_ino << " which we have " << *remote_in << dendl;
         } else {
-          dout(12) << "_fetched  got remote link " << remote_ino << " (don't have it)" << dendl;
+          dout(12) << __func__ << "_fetched  got remote link " << remote_ino << " (don't have it)" << dendl;
         }
       } else {
-        dout(0) << "_fetched  badness: got referent inode (but i already had) " << *ref_in
+        dout(0) << __func__ << "_fetched  badness: got referent inode (but i already had) " << *ref_in
                 << " mode " << ref_in->get_inode()->mode
                 << " mtime " << ref_in->get_inode()->mtime << dendl;
         string dirpath, inopath;
@@ -2859,7 +2867,7 @@ void CDir::_parse_dentry(CDentry *dn, dentry_commit_item &item,
     CInode *in = linkage.get_referent_inode();
     ceph_assert(in);
 
-    dout(14) << " dn '" << dn->get_name() << "' ref inode " << *in << "' remote ino " << item.ino << dendl;
+    dout(14) << __func__ << " dn '" << dn->get_name() << "' referent inode " << *in << " remote ino " << item.ino << dendl;
 
     item.features = mdcache->mds->mdsmap->get_up_features();
     item.inode = in->inode;
@@ -3012,11 +3020,11 @@ void CDir::_committed(int r, version_t v)
 
       if (committed_version >= in->get_version()) {
 	if (in->is_dirty()) {
-	  dout(15) << " referent inode " << " dir " << committed_version << " >= inode " << in->get_version() << " now clean " << *in << dendl;
+	  dout(15) << __func__ << " referent inode - dir " << committed_version << " >= inode " << in->get_version() << " now clean " << *in << dendl;
 	  in->mark_clean();
 	}
       } else {
-	dout(15) << " referent inode " << " dir " << committed_version << " < inode " << in->get_version() << " still dirty " << *in << dendl;
+	dout(15) << __func__ << " referent inode - dir " << committed_version << " < inode " << in->get_version() << " still dirty " << *in << dendl;
 	ceph_assert(in->is_dirty() || in->last < CEPH_NOSNAP);  // special case for cow snap items (not predirtied)
       }
     }

@@ -5104,7 +5104,7 @@ void MDCache::handle_cache_rejoin_ack(const cref_t<MMDSCacheRejoin> &ack)
 	    dout(10) << " had bad linkage for " << *dn << ", unlinking " << *in << dendl;
 	    dir->unlink_inode(dn);
 	  }
-        } else if (dnl->is_remote() || dnl->is_referent_remote()) {
+        } else if (dnl->is_remote() || dnl->is_referent_remote()) { //TODO: referent_remote needs separate handling
 	  if (!(q.second.is_remote() || q.second.is_referent_remote()) ||
 	      q.second.remote_ino != dnl->get_remote_ino() ||
 	      q.second.remote_d_type != dnl->get_remote_d_type()) {
@@ -5118,7 +5118,7 @@ void MDCache::handle_cache_rejoin_ack(const cref_t<MMDSCacheRejoin> &ack)
 
 	// hmm, did we have the proper linkage here?
 	if (dnl->is_null() && !q.second.is_null()) {
-	  if (q.second.is_remote() || q.second.is_referent_remote()) {
+	  if (q.second.is_remote() || q.second.is_referent_remote()) { //TODO:: referent_remote needs separate handling
 	    dn->dir->link_remote_inode(dn, q.second.remote_ino, q.second.remote_d_type);
 	  } else {
 	    CInode *in = get_inode(q.second.ino, q.first.snapid);
@@ -7382,7 +7382,7 @@ void MDCache::trim_non_auth()
 
       // unlink the dentry
       dout(10) << " removing " << *dn << dendl;
-      if (dnl->is_remote() || dnl->is_referent_remote()) {
+      if (dnl->is_remote() || dnl->is_referent_remote()) { //TODO: referent_remote needs separate handling
 	dir->unlink_inode(dn, false);
       } 
       else if (dnl->is_primary()) {
@@ -7507,7 +7507,7 @@ bool MDCache::trim_non_auth_subtree(CDir *dir)
       dout(20) << "trim_non_auth_subtree(" << dir << ") keeping dentry " << dn <<dendl;
     } else { // just remove it
       dout(20) << "trim_non_auth_subtree(" << dir << ") removing dentry " << dn << dendl;
-      if (dnl->is_remote() || dnl->is_referent_remote())
+      if (dnl->is_remote() || dnl->is_referent_remote()) //TODO referent_remote needs separate handling
         dir->unlink_inode(dn, false);
       dir->remove_dentry(dn);
     }
@@ -8952,6 +8952,8 @@ CInode *MDCache::get_dentry_inode(CDentry *dn, const MDRequestRef& mdr, bool pro
   CInode *in = get_inode(dnl->get_remote_ino());
   if (in) {
     CInode *ref_in = dnl->get_referent_inode();
+    if (dnl->is_referent_remote())
+      ceph_assert(ref_in);
     if (ref_in) {
       dout(7) << "get_dentry_inode linking in referent remote in " << *in << "referent " << *ref_in << dendl;
       dn->link_remote(dnl, in, ref_in);

@@ -433,17 +433,17 @@ private:
   }
 
   void add_remote_dentry(CDentry *dn, bool dirty) {
-    add_remote_dentry(add_dir(dn->get_dir(), false), dn, dirty, 0, 0, 0, NULL);
+    add_remote_dentry(add_dir(dn->get_dir(), false), dn, dirty, 0, 0, 0, nullptr);
   }
   void add_remote_dentry(CDentry *dn, bool dirty, inodeno_t rino, int rdt, inodeno_t referent_ino, CInode *ref_in) {
     add_remote_dentry(add_dir(dn->get_dir(), false), dn, dirty, rino, rdt, referent_ino, ref_in);
   }
   void add_remote_dentry(dirlump& lump, CDentry *dn, bool dirty, 
-			 inodeno_t rino=0, unsigned char rdt=0, inodeno_t referent_ino=0, CInode *ref_in=NULL) {
+			 inodeno_t rino=0, unsigned char rdt=0, inodeno_t referent_ino=0, CInode *ref_in=nullptr) {
     dn->check_corruption(false);
     /* In multi-version inode, i.e., a file has hardlinks and the primary link is being deleted,
      * the primary inode is added as remote in the journal. In this case, it will not have a
-     * referent inode. So referent_ino=0 and ref_in=NULL.
+     * referent inode. So referent_ino=0 and ref_in=nullptr.
      */
     if (!rino) {
       rino = dn->get_projected_linkage()->get_remote_ino();
@@ -526,7 +526,7 @@ private:
     add_dentry(lump, dn, dn->is_dirty(), dirty_parent, dirty_pool);
   }
   void add_dentry(dirlump& lump, CDentry *dn, bool dirty, bool dirty_parent, bool dirty_pool) {
-    // primary or remote
+    // primary or remote or referent_remote
     if (dn->get_projected_linkage()->is_remote() || dn->get_projected_linkage()->is_referent_remote()) {
       add_remote_dentry(dn, dirty);
     } else if (dn->get_projected_linkage()->is_null()) {

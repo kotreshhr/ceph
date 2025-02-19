@@ -681,10 +681,10 @@ void EMetaBlob::fullbit::update_inode(MDSRank *mds, CInode *in)
 }
 
 // EMetaBlob::remotebit
-//
 void EMetaBlob::remotebit::update_referent_inode(MDSRank *mds, CInode *in)
 {
   in->reset_inode(std::move(referent_inode));
+  // Note: xattrs, old_inodes are not journalled for referent inodes. Not required.
 
   /*
    * In case there was anything malformed in the journal that we are
@@ -1455,11 +1455,12 @@ void EMetaBlob::replay(MDSRank *mds, LogSegment *logseg, int type, MDPeerUpdate 
 
     // remote dentries
     for (auto& rb : lump.get_dremote()) {
-      dout(20) << "EMetaBlob.replay - Going over remotebit " << rb << dendl;
+      dout(20) << __func__ << " Going over remotebit " << rb << dendl;
       CDentry *dn = dir->lookup_exact_snap(rb.dn, rb.dnlast);
       if (!dn) {
-	// add remote dentry if it's not referent. For referent remote, add a null dentry
-	// and linkage would happen after initiating referent CInode
+	/* Add remote dentry if it's not referent. For referent remote, add a null
+	 * dentry and linkage would happen after initiating referent CInode
+	 */
 	if (rb.referent_ino == 0)
 	  dn = dir->add_remote_dentry(rb.dn, nullptr, rb.ino, rb.d_type, mempool::mds_co::string(rb.alternate_name), rb.dnfirst, rb.dnlast);
 	else
@@ -1495,7 +1496,7 @@ void EMetaBlob::replay(MDSRank *mds, LogSegment *logseg, int type, MDPeerUpdate 
 
       /* TODO: In multi-version inode, i.e., a file has hardlinks and the primary link is being deleted,
        * the primary inode is added as remote in the journal. In this case, it will not have a
-       * referent inode. So rb.referent_ino=0.
+       * referent inode. So rb.referent_ino=0. Are we good here ?
        *
        * Also takes care of the situation if referent inode feature is disabled
        */
@@ -1505,55 +1506,55 @@ void EMetaBlob::replay(MDSRank *mds, LogSegment *logseg, int type, MDPeerUpdate 
         if (!ref_in) {
           ref_in = new CInode(mds->mdcache, dn->is_auth(), rb.dnfirst, rb.dnlast);
           rb.update_referent_inode(mds, ref_in);
-	  ceph_assert(ref_in->_get_inode()->remote_ino == rb.ino);
-	  ceph_assert(ref_in->_get_inode()->ino == rb.referent_ino);
-	  mds->mdcache->add_inode(ref_in);
-          dout(10) << "EMetaBlob.replay referent inode created for dn " << *dn << " inode " << *ref_in << " ref ino " << rb.referent_ino << dendl;
-	  if (!dn->get_linkage()->is_null()) {
-	    if (dn->get_linkage()->is_referent_remote()) {
-	      unlinked[dn->get_linkage()->get_referent_inode()] = dir;
-	      CachedStackStringStream css;
-	      *css << "EMetaBlob.replay FIXME had dentry linked to wrong referent inode " << *dn
-	         << " " << *dn->get_linkage()->get_referent_inode() << " should be " << ref_in->ino();
-	      dout(0) << css->strv() << dendl;
-	      mds->clog->warn() << css->strv();
-	    }
-	    dir->unlink_inode(dn, false);
-	  }
-	  if (unlinked.count(ref_in))
-	    linked.insert(ref_in);
+          ceph_assert(ref_in->_get_inode()->remote_ino == rb.ino);
+          ceph_assert(ref_in->_get_inode()->ino == rb.referent_ino);
+          mds->mdcache->add_inode(ref_in);
+          dout(10) << __func__ << " referent inode created for dn " << *dn << " inode " << *ref_in << " ref ino " << rb.referent_ino << dendl;
+          if (!dn->get_linkage()->is_null()) {
+            if (dn->get_linkage()->is_referent_remote()) {
+              unlinked[dn->get_linkage()->get_referent_inode()] = dir;
+              CachedStackStringStream css;
+              *css << "EMetaBlob.replay FIXME had dentry linked to wrong referent inode " << *dn
+                 << " " << *dn->get_linkage()->get_referent_inode() << " should be " << ref_in->ino();
+              dout(0) << css->strv() << dendl;
+              mds->clog->warn() << css->strv();
+          }
+            dir->unlink_inode(dn, false);
+          }
+          if (unlinked.count(ref_in))
+            linked.insert(ref_in);
           dn->set_alternate_name(mempool::mds_co::string(rb.alternate_name));
-	  dir->link_referent_inode(dn, ref_in, rb.ino, rb.d_type);
-	  dout(10) << "EMetaBlob.replay referent remote inode added " << *ref_in << dendl;
+          dir->link_referent_inode(dn, ref_in, rb.ino, rb.d_type);
+          dout(10) << __func__ << " referent remote inode added " << *ref_in << dendl;
         } else {
-	  ref_in->first = rb.dnfirst;
+          ref_in->first = rb.dnfirst;
           rb.update_referent_inode(mds, ref_in);
-          dout(10) << "EMetaBlob.replay referent inode found in memory for dn " << *dn << " inode " << *ref_in << " ref ino " << rb.referent_ino << dendl;
-	  if (dn->get_linkage()->get_referent_inode() != ref_in && ref_in->get_parent_dn()) {
-	    dout(10) << "EMetaBlob.replay referent inode unlinking " << *ref_in << dendl;
-	    unlinked[ref_in] = ref_in->get_parent_dir();
-	    ref_in->get_parent_dir()->unlink_inode(ref_in->get_parent_dn());
-	  }
-	  if (dn->get_linkage()->get_inode() != ref_in) {
-	    if (!dn->get_linkage()->is_null()) { // note: might be remote.  as with stray reintegration.
-	      if (dn->get_linkage()->is_referent_remote()) {
-	        unlinked[dn->get_linkage()->get_referent_inode()] = dir;
-	        CachedStackStringStream css;
-	        *css << "EMetaBlob.replay FIXME had dentry linked to wrong referent inode " << *dn
-		   << " " << *dn->get_linkage()->get_referent_inode() << " should be " << ref_in->ino();
-	        dout(0) << css->strv() << dendl;
-	        mds->clog->warn() << css->strv();
-	      }
-	      dir->unlink_inode(dn, false);
-	    }
-	    if (unlinked.count(ref_in))
-	      linked.insert(ref_in);
+          dout(10) << __func__ << " referent inode found in memory for dn " << *dn << " inode " << *ref_in << " ref ino " << rb.referent_ino << dendl;
+          if (dn->get_linkage()->get_referent_inode() != ref_in && ref_in->get_parent_dn()) {
+            dout(10) << __func__ << " referent inode unlinking " << *ref_in << dendl;
+            unlinked[ref_in] = ref_in->get_parent_dir();
+            ref_in->get_parent_dir()->unlink_inode(ref_in->get_parent_dn());
+          }
+          if (dn->get_linkage()->get_inode() != ref_in) {
+            if (!dn->get_linkage()->is_null()) { // note: might be remote.  as with stray reintegration.
+              if (dn->get_linkage()->is_referent_remote()) {
+                unlinked[dn->get_linkage()->get_referent_inode()] = dir;
+                CachedStackStringStream css;
+                *css << "EMetaBlob.replay FIXME had dentry linked to wrong referent inode " << *dn
+                   << " " << *dn->get_linkage()->get_referent_inode() << " should be " << ref_in->ino();
+                dout(0) << css->strv() << dendl;
+                mds->clog->warn() << css->strv();
+              }
+              dir->unlink_inode(dn, false);
+            }
+            if (unlinked.count(ref_in))
+              linked.insert(ref_in);
             dn->set_alternate_name(mempool::mds_co::string(rb.alternate_name));
-	    dir->link_referent_inode(dn, ref_in, rb.ino, rb.d_type);
-	    dout(10) << "EMetaBlob.replay linked " << *ref_in << dendl;
-	  } else {
-	    dout(10) << "EMetaBlob.replay referent inode for [" << rb.dnfirst << "," << rb.dnlast << "] had " << *ref_in << " dentry " << *dn << dendl;
-	  }
+            dir->link_referent_inode(dn, ref_in, rb.ino, rb.d_type);
+            dout(10) << __func__ << " linked referent inode" << *ref_in << dendl;
+          } else {
+            dout(10) << __func__ << " referent inode for [" << rb.dnfirst << "," << rb.dnlast << "] had " << *ref_in << " dentry " << *dn << dendl;
+          }
         }
 
         //TODO: dirty referent inode parent in->mark_dirty_parent(logseg, fb.is_dirty_pool());

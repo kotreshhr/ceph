@@ -3628,6 +3628,10 @@ CInode* Server::prepare_new_inode(const MDRequestRef& mdr, CDir *dir, inodeno_t 
     ceph_assert(_inode->uid != (unsigned)-1);
   }
 
+  /* The referent inode is created on hardlink, so the client request wouldn't
+   * have uid, gid set. So don't use uid and gid from client if it's a referent
+   * inode.
+   */
   if (referent_inode) {
     _inode->gid = 0;
     _inode->uid = 0;
@@ -7564,11 +7568,11 @@ void Server::_link_local(const MDRequestRef& mdr, CDentry *dn, CInode *targeti, 
     _inode->update_backtrace();
 
     pi.inode->add_referent_ino(newi->ino());
-    dout(20) << "_link_local " << " referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino added " << newi->ino() << dendl;
+    dout(20) << __func__ << " referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino added " << newi->ino() << dendl;
 
-    //TODO layout, rstat accounting for referent inode ?
-
-    // TODO - snapshot related inode updates - snaprealm on referent inode
+    /* NOTE: layout, rstat accounting and snapshot related inode updates are not
+     * required and hence not done for referent inodes.
+     */
   }
 
   bool adjust_realm = false;
@@ -7585,16 +7589,16 @@ void Server::_link_local(const MDRequestRef& mdr, CDentry *dn, CInode *targeti, 
   le->metablob.add_client_req(mdr->reqid, mdr->client_request->get_oldest_client_tid());
   mdcache->predirty_journal_parents(mdr, &le->metablob, targeti, dn->get_dir(), PREDIRTY_DIR, 1);      // new dn
   mdcache->predirty_journal_parents(mdr, &le->metablob, targeti, 0, PREDIRTY_PRIMARY);           // targeti
-  dout(20) << "_link_local calling metablob add_remote_dentry with referent_ino= " << (newi ? newi->ino() : inodeno_t(0)) << dendl;
+  dout(20) << __func__ << " calling metablob add_remote_dentry with referent_ino= " << (newi ? newi->ino() : inodeno_t(0)) << dendl;
   le->metablob.add_remote_dentry(dn, true, targeti->ino(), targeti->d_type(), newi ? newi->ino() : inodeno_t(0), newi);  // new remote
   mdcache->journal_dirty_inode(mdr.get(), &le->metablob, targeti);
 
+  // do this after predirty_*, to avoid funky extra dnl arg
   if (newi) {
     // journal allocated referent inode and push the linkage with referent inode
     journal_allocated_inos(mdr, &le->metablob);
     dn->push_projected_linkage(newi, targeti->ino(), newi->ino());
   } else {
-    // do this after predirty_*, to avoid funky extra dnl arg
     dn->push_projected_linkage(targeti->ino(), targeti->d_type());
   }
 
@@ -7621,11 +7625,6 @@ void Server::_link_local_finish(const MDRequestRef& mdr, CDentry *dn, CInode *ta
 
   // target inode
   mdr->apply();
-
-  if (referenti) {
-    auto target_inode = targeti->_get_inode();
-    dout(20) << "_link_local_finish referent_inodes - " << std::hex << target_inode->get_referent_inodes() << dendl;
-  }
 
   MDRequestRef null_ref;
   mdcache->send_dentry_link(dn, null_ref, referenti ? false: true);

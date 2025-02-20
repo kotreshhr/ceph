@@ -772,12 +772,27 @@ void CDir::unlink_inode_work(CDentry *dn)
 
     dn->get_linkage()->set_remote(0, 0);
   } else if(dn->get_linkage()->is_referent_remote()) {
-    // referent remote
+      // referent remote
       CInode *ref_in = dn->get_linkage()->get_referent_inode();
-      // referent inode - unpin dentry?
+
       if (ref_in->get_num_ref())
         dn->put(CDentry::PIN_INODEPIN);
-      // TODO - unlink auth_pin count, not done in link_referent_inode, so ignore for now
+
+      if (ref_in->state_test(CInode::STATE_TRACKEDBYOFT))
+        mdcache->open_file_table.notify_unlink(ref_in);
+      if (ref_in->is_any_caps())
+        adjust_num_inodes_with_caps(-1);
+
+      // unlink auth_pin count
+      if (ref_in->auth_pins)
+        dn->adjust_nested_auth_pins(-ref_in->auth_pins, nullptr);
+
+      if (ref_in->is_freezing_inode())
+        ref_in->item_freezing_inode.remove_myself();
+      else if (ref_in->is_frozen_inode() || ref_in->is_frozen_auth_pin())
+        num_frozen_inodes--;
+
+      // detach inode
       ref_in->remove_primary_parent(dn);
       if (in)
         dn->unlink_remote(dn->get_linkage());

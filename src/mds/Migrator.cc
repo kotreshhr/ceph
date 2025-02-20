@@ -1824,7 +1824,8 @@ void Migrator::encode_export_dir(bufferlist& exportbl,
 
     if (dn->get_linkage()->is_referent_remote()) {
       // referent inode
-      exportbl.append("r", 1);    // inode dentry
+      ceph_assert(ref_in);
+      exportbl.append("r", 1);    // referent inode dentry
       ENCODE_START(2, 1, exportbl);
       encode_export_inode(ref_in, exportbl, exported_client_map, exported_client_metadata_map);  // encode, and (update state for) export
       encode(dn->alternate_name, exportbl);
@@ -1901,8 +1902,8 @@ void Migrator::finish_export_dir(CDir *dir, mds_rank_t peer,
     } else if (dn->get_linkage()->is_referent_remote()) { //referent inode ?
       CInode *ref_in = dn->get_linkage()->get_referent_inode();
       finish_export_inode(ref_in, peer, peer_imported[ref_in->ino()], finished);
+      // referent inode - no subdirs
     }
-
 
     mdcache->touch_dentry_bottom(dn); // move dentry to tail of LRU
     ++(*num_dentries);
@@ -3345,7 +3346,7 @@ void Migrator::decode_import_inode(CDentry *dn, bufferlist::const_iterator& blp,
   }
 
   // link before state  -- or not!  -sage
-  if (in->get_remote_ino()) {
+  if (in->get_remote_ino()) { //referent inode ?
     dout(20) << __func__ << " linking decoded referent_inode="  << *in << " remote_inode=" << in->get_remote_ino() << dendl;
     if (dn->get_linkage()->get_referent_inode() != in) {
       ceph_assert(!dn->get_linkage()->get_referent_inode());

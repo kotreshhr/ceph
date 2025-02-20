@@ -1663,12 +1663,17 @@ void MDCache::journal_cow_dentry(MutationImpl *mut, EMetaBlob *metablob,
       if (dir_follows+1 > dn->first) {
 	snapid_t oldfirst = dn->first;
 	dn->first = dir_follows+1;
-	// TODO: Needs to call with related_snaprealm??
+	// TODO: Needs to call with related_snaprealm?? I think yes! It's a real inode,
+	// so has_snaps_in_range should be called with related_snaprealm.
 	if (realm->has_snaps_in_range(oldfirst, dir_follows)) {
 	  CDir *dir = dn->dir;
-          // TODO: What does this mean for referent inode ?? Passing nullptr for now.
+          /* TODO: No need to cow referent inode. So just the remote dentry is prepared,
+           * journalled and added to dirty_cow_dentries list. But when the journal is
+           * replayed. How does this play out ? Test this out.
+	   */
 	  if (mds->mdsmap->allow_referent_inodes()) {
-	    dout(10) << __func__ << " NEEDS FIX1 - Adding dentry as remote when referent inode feature is enabled !!! " << *dn << dendl;
+            dout(10) << __func__ << " lookout-1 - Adding dentry as remote for journal when referent inode feature is enabled !!! "
+	             << " dentry " << *dn << " first " << oldfirst << " last " << dir_follows << dendl;
 	  }
 	  CDentry *olddn = dir->add_remote_dentry(dn->get_name(), nullptr, in->ino(), in->d_type(), dn->alternate_name, oldfirst, dir_follows);
 	  dout(10) << " olddn " << *olddn << dendl;
@@ -1774,9 +1779,13 @@ void MDCache::journal_cow_dentry(MutationImpl *mut, EMetaBlob *metablob,
       mut->add_cow_dentry(olddn);
     } else {
       ceph_assert(dnl->is_remote() || dnl->is_referent_remote());
-      //No need to journal referent inode for cow
+      /* TODO: No need to cow referent inode. So just the remote dentry is prepared,
+       * journalled and added to dirty_cow_dentries list. But when the journal is
+       * replayed. How does this play out ? Test this out.
+       */
       if (mds->mdsmap->allow_referent_inodes()) {
-        dout(10) << __func__ << " NEEDS FIX2 - Adding dentry as remote when referent inode feature is enabled !!! " << *dn << dendl;
+        dout(10) << __func__ << " lookout-2 - Adding dentry as remote for journal when referent inode feature is enabled !!! "
+	         << " dentry " << *dn << " first " << oldfirst << " last " << follows << dendl;
       }
       CDentry *olddn = dir->add_remote_dentry(dn->get_name(), nullptr, dnl->get_remote_ino(), dnl->get_remote_d_type(), dn->alternate_name, oldfirst, follows);
       dout(10) << " olddn " << *olddn << dendl;
@@ -8955,10 +8964,10 @@ CInode *MDCache::get_dentry_inode(CDentry *dn, const MDRequestRef& mdr, bool pro
     if (dnl->is_referent_remote())
       ceph_assert(ref_in);
     if (ref_in) {
-      dout(7) << "get_dentry_inode linking in referent remote in " << *in << "referent " << *ref_in << dendl;
+      dout(7) << __func__ << " linking in referent remote in " << *in << "referent " << *ref_in << dendl;
       dn->link_remote(dnl, in, ref_in);
     } else {
-      dout(7) << "get_dentry_inode linking in remote in " << *in << dendl;
+      dout(7) << __func__ << " linking in remote in " << *in << dendl;
       dn->link_remote(dnl, in);
     }
     return in;

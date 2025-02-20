@@ -343,7 +343,7 @@ void CDir::adjust_dentry_lru(CDentry *dn)
   bool bottom_lru;
   if (dn->get_linkage()->is_primary()) {
     bottom_lru = !is_auth() && inode->is_stray();
-  } else if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent_remote()) {
+  } else if (dn->get_linkage()->is_remote() || dn->get_linkage()->is_referent_remote()) { //TODO Is this right for referent remote?
     bottom_lru = false;
   } else {
     bottom_lru = !is_auth();

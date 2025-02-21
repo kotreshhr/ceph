@@ -10919,13 +10919,13 @@ void MDCache::handle_discover(const cref_t<MDiscover> &dis)
       }
     } else if (dnl->is_referent_remote() && dnl->get_referent_inode()->is_frozen_inode()) {
       if (tailitem && dis->is_path_locked()) {
-	dout(7) << "handle_discover allowing discovery of frozen tail referent inode" << *dnl->get_referent_inode() << dendl;
+	dout(7) << __func__ << " allowing discovery of frozen tail referent inode" << *dnl->get_referent_inode() << dendl;
       } else if (reply->is_empty()) {
-	dout(7) << *dnl->get_referent_inode() << " referent inode is frozen, empty reply, waiting" << dendl;
+	dout(7) << __func__ << *dnl->get_referent_inode() << " referent inode is frozen, empty reply, waiting" << dendl;
 	dnl->get_referent_inode()->add_waiter(CDir::WAIT_UNFREEZE, new C_MDS_RetryMessage(mds, dis));
 	return;
       } else {
-	dout(7) << *dnl->get_referent_inode() << " referent inode is frozen, non-empty reply, stopping" << dendl;
+	dout(7) << __func__ << *dnl->get_referent_inode() << " referent inode is frozen, non-empty reply, stopping" << dendl;
 	break;
       }
     }

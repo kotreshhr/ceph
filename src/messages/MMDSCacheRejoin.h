@@ -114,7 +114,7 @@ public:
     int32_t lock = 0;
     dn_strong() = default;
     dn_strong(snapid_t f, std::string_view altn, inodeno_t pi, inodeno_t ri, inodeno_t ref_ino, unsigned char rdt, int n, int l) :
-      first(f), alternate_name(altn), ino(pi), remote_ino(ri), referent_ino(ref_ino),remote_d_type(rdt), nonce(n), lock(l) {}
+      first(f), alternate_name(altn), ino(pi), remote_ino(ri), referent_ino(ref_ino), remote_d_type(rdt), nonce(n), lock(l) {}
     bool is_primary() const { return ino > 0; }
     bool is_remote() const { return remote_ino > 0; }
     bool is_referent_remote() const { return remote_ino > 0 && referent_ino > 0; }

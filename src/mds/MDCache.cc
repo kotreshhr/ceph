@@ -4843,13 +4843,13 @@ void MDCache::handle_cache_rejoin_strong(const cref_t<MMDSCacheRejoin> &strong)
 	      // default CEPH_NOSNAP. Validate this by testing.
 	      ref_in = get_inode(d.referent_ino);
 	      if (!ref_in) {
-	        dout(20) << " rejoin:  referent inode not found in memory for dentry " << *dn << " inventing " << dendl;
+	        dout(20) << __func__ << " rejoin:  referent inode not found in memory for dentry " << *dn << " inventing " << dendl;
 		ref_in = rejoin_invent_inode(d.referent_ino, CEPH_NOSNAP);
                 ref_in->set_remote_ino(d.remote_ino);
 	      }
-	      dout(20) << " rejoin: referent inode invented " << *ref_in << " for dentry " << *dn << dendl;
+	      dout(20) << __func__ << " rejoin: referent inode invented " << *ref_in << " for dentry " << *dn << dendl;
 	    } else {
-	      dout(20) << " rejoin: add remote inode for dentry " << *dn << dendl;
+	      dout(20) << __func__ << " rejoin: add remote inode for dentry " << *dn << dendl;
 	    }
 	    dn = dir->add_remote_dentry(ss.name, ref_in, d.remote_ino, d.remote_d_type, mempool::mds_co::string(d.alternate_name), d.first, ss.snapid);
 	  } else if (d.is_null()) {
@@ -5113,11 +5113,19 @@ void MDCache::handle_cache_rejoin_ack(const cref_t<MMDSCacheRejoin> &ack)
 	    dout(10) << " had bad linkage for " << *dn << ", unlinking " << *in << dendl;
 	    dir->unlink_inode(dn);
 	  }
-        } else if (dnl->is_remote() || dnl->is_referent_remote()) { //TODO: referent_remote needs separate handling
-	  if (!(q.second.is_remote() || q.second.is_referent_remote()) ||
+        } else if (dnl->is_remote()) {
+	  if (!q.second.is_remote() ||
 	      q.second.remote_ino != dnl->get_remote_ino() ||
 	      q.second.remote_d_type != dnl->get_remote_d_type()) {
 	    dout(10) << " had bad linkage for " << *dn <<  dendl;
+	    dir->unlink_inode(dn);
+	  }
+        } else if (dnl->is_referent_remote()) {
+	  if (!q.second.is_referent_remote() ||
+	      q.second.remote_ino != dnl->get_remote_ino() ||
+	      q.second.remote_d_type != dnl->get_remote_d_type() ||
+	      q.second.referent_ino != dnl->get_referent_ino()) {
+	    dout(10) << __func__ << " had bad referent remote linkage for " << *dn <<  dendl;
 	    dir->unlink_inode(dn);
 	  }
         } else {
@@ -5127,8 +5135,26 @@ void MDCache::handle_cache_rejoin_ack(const cref_t<MMDSCacheRejoin> &ack)
 
 	// hmm, did we have the proper linkage here?
 	if (dnl->is_null() && !q.second.is_null()) {
-	  if (q.second.is_remote() || q.second.is_referent_remote()) { //TODO:: referent_remote needs separate handling
+	  if (q.second.is_remote()) {
 	    dn->dir->link_remote_inode(dn, q.second.remote_ino, q.second.remote_d_type);
+	  } else if (q.second.is_referent_remote()) {
+	    CInode *ref_in = get_inode(q.second.referent_ino, CEPH_NOSNAP);
+	    if (!ref_in) {
+	      // barebones inode;
+	      ref_in = new CInode(this, false, 2, CEPH_NOSNAP);
+	      auto _inode = ref_in->_get_inode();
+	      _inode->ino = q.second.referent_ino;
+	      _inode->mode = S_IFREG;
+	      _inode->layout = default_file_layout;
+	      add_inode(ref_in);
+	      dout(10) << __func__ << " add inode " << *ref_in << dendl;
+	    } else if (ref_in->get_parent_dn()) {
+	      dout(10) << __func__ << " had bad referent linkage for " << *(ref_in->get_parent_dn())
+		       << ", unlinking referent inode" << *ref_in << dendl;
+	      ref_in->get_parent_dir()->unlink_inode(ref_in->get_parent_dn());
+	    }
+	    dn->dir->link_referent_inode(dn, ref_in, q.second.remote_ino, q.second.remote_d_type);
+	    isolated_inodes.erase(ref_in);
 	  } else {
 	    CInode *in = get_inode(q.second.ino, q.first.snapid);
 	    if (!in) {

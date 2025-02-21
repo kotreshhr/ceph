@@ -1504,7 +1504,8 @@ void EMetaBlob::replay(MDSRank *mds, LogSegment *logseg, int type, MDPeerUpdate 
       if (rb.referent_ino != 0) {
         ref_in = mds->mdcache->get_inode(rb.referent_ino, rb.dnlast);
         if (!ref_in) {
-          ref_in = new CInode(mds->mdcache, dn->is_auth(), rb.dnfirst, rb.dnlast);
+	  // referent inode, use default first and last
+          ref_in = new CInode(mds->mdcache, dn->is_auth());
           rb.update_referent_inode(mds, ref_in);
           ceph_assert(ref_in->_get_inode()->remote_ino == rb.ino);
           ceph_assert(ref_in->_get_inode()->ino == rb.referent_ino);

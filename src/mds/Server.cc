@@ -7411,7 +7411,7 @@ void Server::handle_client_link(const MDRequestRef& mdr)
     // Load referent inodes since path traverse not happening on targeti
     CF_MDS_RetryRequestFactory cf(mdcache, mdr, true);
     dout(15) << "handle_client_link " << "only targeti received - no path, loading referent inodes of " << *targeti << dendl;
-    if (mdcache->load_referent_inodes(targeti, cf) != 0)
+    if (mdcache->load_referent_inodes(targeti, cf, true) != 0)
       return;
 
     if (!(mdr->locking_state & MutationImpl::SNAP2_LOCKED)) {
@@ -7702,7 +7702,7 @@ void Server::_link_remote(const MDRequestRef& mdr, bool inc, CDentry *dn, CInode
     targeti->set_object_info(req->get_object_info());
     req->op_stamp = mdr->get_op_stamp();
     if (mds->mdsmap->allow_referent_inodes()) {
-      if (inc)
+      if (inc && newi)
         req->referent_ino = newi->ino();
       else {
         if (dnl->is_referent_remote()) {
@@ -7763,13 +7763,13 @@ void Server::_link_remote(const MDRequestRef& mdr, bool inc, CDentry *dn, CInode
     mdcache->predirty_journal_parents(mdr, &le->metablob, targeti, dn->get_dir(), PREDIRTY_DIR, 1);
 
     if (newi) {
-      dout(20) << "_link_remote calling metablob add_remote_dentry with referent_ino= " << newi->ino() << dendl;
+      dout(20) << __func__ << " calling metablob add_remote_dentry with referent_ino= " << newi->ino() << dendl;
       le->metablob.add_remote_dentry(dn, true, targeti->ino(), targeti->d_type(), newi->ino(), newi); // new remote
       // journal allocated referent inode.
       journal_allocated_inos(mdr, &le->metablob);
       dn->push_projected_linkage(newi, targeti->ino(), newi->ino());
     } else {
-      le->metablob.add_remote_dentry(dn, true, targeti->ino(), targeti->d_type(), inodeno_t(0), newi); // new remote
+      le->metablob.add_remote_dentry(dn, true, targeti->ino(), targeti->d_type(), inodeno_t(0), nullptr); // new remote
       dn->push_projected_linkage(targeti->ino(), targeti->d_type());
     }
   } else {
@@ -7906,10 +7906,10 @@ class C_MDS_PeerLinkCommit : public ServerContext {
   inodeno_t referent_ino;
   bool link_inc;
 public:
-  C_MDS_PeerLinkCommit(Server *s, const MDRequestRef& r, CInode *t, inodeno_t ri, bool inc) :
-    ServerContext(s), mdr(r), targeti(t), referent_ino(ri), link_inc(inc) { }
+  C_MDS_PeerLinkCommit(Server *s, const MDRequestRef& r, CInode *t) :
+    ServerContext(s), mdr(r), targeti(t) { }
   void finish(int r) override {
-    server->_commit_peer_link(mdr, r, targeti, referent_ino, link_inc);
+    server->_commit_peer_link(mdr, r, targeti);
   }
 };
 
@@ -7978,10 +7978,12 @@ void Server::handle_peer_link_prep(const MDRequestRef& mdr)
       adjust_realm = true;
       realm_projected = true;
     }
-    // Link referent inode to the primary inode (targeti)
-    //ceph_assert(referent_ino);
-    //pi.inode->add_referent_ino(referent_ino);
-    //dout(20) << "handle_peer_link_prep " << "referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino added " << referent_ino << dendl;
+    // Reverse link referent inode to the primary inode (targeti)
+    if (referent_ino > 0) {
+      pi.inode->add_referent_ino(referent_ino);
+      dout(20) << __func__ <<  " referent_inodes " << std::hex << pi.inode->get_referent_inodes()
+               << " referent ino added " << referent_ino << dendl;
+    }
   } else {
     inc = false;
     pi.inode->nlink--;
@@ -8040,7 +8042,7 @@ void Server::handle_peer_link_prep(const MDRequestRef& mdr)
   mdcache->add_uncommitted_peer(mdr->reqid, mdr->ls, mdr->peer_to_mds);
 
   // set up commit waiter
-  mdr->more()->peer_commit = new C_MDS_PeerLinkCommit(this, mdr, targeti, referent_ino, inc);
+  mdr->more()->peer_commit = new C_MDS_PeerLinkCommit(this, mdr, targeti);
 
   mdr->more()->peer_update_journaled = true;
   submit_mdlog_entry(le, new C_MDS_PeerLinkPrep(this, mdr, targeti, adjust_realm),
@@ -8073,11 +8075,6 @@ void Server::_logged_peer_link(const MDRequestRef& mdr, CInode *targeti, bool ad
   // ack
   if (!mdr->aborted) {
     auto reply = make_message<MMDSPeerRequest>(mdr->reqid, mdr->attempt, MMDSPeerRequest::OP_LINKPREPACK);
-    if (mds->mdsmap->allow_referent_inodes()) {
-      dout(10) << __func__ << " send targeti with link_prep_ack " << *targeti << dendl;
-      mdcache->encode_replica_inode(targeti, mdr->peer_to_mds, reply->targeti_bl,
-                                    mds->mdsmap->get_up_features());
-    }
     mds->send_message_mds(reply, mdr->peer_to_mds);
   } else {
     dout(10) << " abort flag set, finishing" << dendl;
@@ -8093,7 +8090,7 @@ struct C_MDS_CommittedPeer : public ServerLogContext {
   }
 };
 
-void Server::_commit_peer_link(const MDRequestRef& mdr, int r, CInode *targeti, inodeno_t referent_ino, bool link_inc)
+void Server::_commit_peer_link(const MDRequestRef& mdr, int r, CInode *targeti)
 {  
   dout(10) << "_commit_peer_link " << *mdr
 	   << " r=" << r
@@ -8102,27 +8099,6 @@ void Server::_commit_peer_link(const MDRequestRef& mdr, int r, CInode *targeti, 
   ceph_assert(g_conf()->mds_kill_link_at != 7);
 
   if (r == 0) {
-    if (mds->mdsmap->allow_referent_inodes()) {
-      // All good, set referent inode before apply
-      if (link_inc) {
-        ceph_assert(referent_ino);
-        auto pi = targeti->project_inode(mdr);
-        pi.inode->version = targeti->pre_dirty();
-        pi.inode->add_referent_ino(referent_ino);
-        dout(20) << "_commit_peer_link " << " referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino added " << referent_ino << dendl;
-      }
-
-      // It's expected to update the fnode when inode data is modified, so asserts are in place
-      // to validate the fnode's version >= inode's version. In this case, there is nothing update,
-      // just cheat it.
-      CDir *parent = targeti->get_projected_parent_dn()->get_dir();
-      auto pf = parent->project_fnode(mdr);
-      pf->version = parent->pre_dirty();
-
-      //apply the referent inode list change
-      mdr->apply();
-    }
-
     // drop our pins, etc.
     mdr->cleanup();
 
@@ -8204,8 +8180,11 @@ void Server::do_link_rollback(bufferlist &rbl, mds_rank_t leader, const MDReques
   pi.inode->ctime = rollback.old_ctime;
   if (rollback.was_inc) {
     pi.inode->nlink--;
-    //pi.inode->remove_referent_ino(rollback.referent_ino);
-    //dout(10) << "do_link_rollback " << "referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino removed " << rollback.referent_ino << dendl;
+    if (rollback.referent_ino > 0) {
+      pi.inode->remove_referent_ino(rollback.referent_ino);
+      dout(10) << __func__ << " referent_inodes " << std::hex << pi.inode->get_referent_inodes()
+               << " referent ino removed " << rollback.referent_ino << dendl;
+    }
   } else {
     pi.inode->nlink++;
     if (rollback.referent_ino) {
@@ -8278,18 +8257,7 @@ void Server::handle_peer_link_prep_ack(const MDRequestRef& mdr, const cref_t<MMD
 
   // note peer
   mdr->more()->peers.insert(from);
-
-  if (mds->mdsmap->allow_referent_inodes()) {
-    // update the targeti
-    CInode *targeti = nullptr;
-    auto p = m->targeti_bl.cbegin();
-    MDSContext::vec finished;
-    mdcache->decode_replica_inode(targeti, p, nullptr, finished);
-    if (!finished.empty())
-      mds->queue_waiters(finished);
-    dout(10) << "handle_peer_link_prep_ack referent-inodes " << std::hex << targeti->get_projected_inode()->referent_inodes << dendl;
-  }
-
+  
   // witnessed!
   ceph_assert(mdr->more()->witnessed.count(from) == 0);
   mdr->more()->witnessed.insert(from);

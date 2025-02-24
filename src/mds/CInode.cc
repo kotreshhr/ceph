@@ -1772,7 +1772,7 @@ void CInode::decode_lock_iauth(bufferlist::const_iterator& p)
 
 void CInode::encode_lock_ilink(bufferlist& bl)
 {
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 1, bl);
   encode(get_inode()->version, bl);
   encode(get_inode()->ctime, bl);
   encode(get_inode()->nlink, bl);
@@ -1790,7 +1790,8 @@ void CInode::decode_lock_ilink(bufferlist::const_iterator& p)
   decode(tm, p);
   if (_inode->ctime < tm) _inode->ctime = tm;
   decode(_inode->nlink, p);
-  decode(_inode->referent_inodes, p);
+  if (struct_v >= 2)
+    decode(_inode->referent_inodes, p);
   DECODE_FINISH(p);
   reset_inode(std::move(_inode));
 }

@@ -7511,7 +7511,7 @@ void Server::handle_client_link(const MDRequestRef& mdr)
   if (targeti->is_auth()) 
     _link_local(mdr, destdn, targeti, target_realm);
   else 
-    _link_remote(mdr, true, destdn, targeti, NULL);
+    _link_remote(mdr, true, destdn, targeti, nullptr);
   mds->balancer->maybe_fragment(dir, false);  
 }
 
@@ -7696,28 +7696,31 @@ void Server::_link_remote(const MDRequestRef& mdr, bool inc, CDentry *dn, CInode
     int op;
     if (inc)
       op = MMDSPeerRequest::OP_LINKPREP;
-    else
+    else 
       op = MMDSPeerRequest::OP_UNLINKPREP;
     auto req = make_message<MMDSPeerRequest>(mdr->reqid, mdr->attempt, op);
     targeti->set_object_info(req->get_object_info());
     req->op_stamp = mdr->get_op_stamp();
+    // referent inode related
+    req->referent_ino = inodeno_t(0);
     if (mds->mdsmap->allow_referent_inodes()) {
-      if (inc && newi)
+      if (inc && newi) {
         req->referent_ino = newi->ino();
-      else {
+        dout(20) << __func__ << " link - referent_ino= " << req->referent_ino << " sending over wire" << dendl;
+      }
+      else { //unlink
         if (dnl->is_referent_remote()) {
           CInode *ref_in = dnl->get_referent_inode();
+          ceph_assert(ref_in->is_auth());
 	  req->referent_ino = ref_in->ino();
+          dout(20) << __func__ << " unlink - referent_ino= " << req->referent_ino << " sending over wire" << dendl;
         }
       }
-      // referent inode related
       vector<CDentry*>& desttrace = mdr->dn[0];
       req->destdnpath = filepath(desttrace.front()->get_dir()->ino());
       for (auto dn : desttrace)
         req->destdnpath.push_dentry(dn->get_name());
       dout(20) << __func__ << " desttrace " << desttrace << " destdnpath " << req->destdnpath << dendl;
-    } else {
-      req->referent_ino = inodeno_t(0);
     }
 
     if (auto& desti_srnode = mdr->more()->desti_srnode)
@@ -7849,7 +7852,7 @@ void Server::_link_remote_finish(const MDRequestRef& mdr, bool inc,
 
     // relink as stray?
     if (straydn) {
-      dout(20) << " referent - straydn is " << *straydn << dendl;
+      dout(20) << __func__ << " referent - straydn is " << *straydn << dendl;
       straydn->pop_projected_linkage();
       mdcache->touch_dentry_bottom(straydn);
     }
@@ -7861,10 +7864,11 @@ void Server::_link_remote_finish(const MDRequestRef& mdr, bool inc,
   if (inc)
     mdcache->send_dentry_link(dn, null_ref, false);
   else {
-    if (straydn)
-      mdcache->send_dentry_unlink(dn, straydn, mdr, ignore_rmdir_witness);
-    else
-      mdcache->send_dentry_unlink(dn, NULL, null_ref, ignore_rmdir_witness);
+    // The mdr is sent only to check rmdir witnesses and ignore them.
+    // In this place, mdr wasn't sent, so it was always ignoring rmdir
+    // witnesses. So ignore_rmdir_witness flag is duplicate here.
+    // Check if this can be removed in the other place as well.
+    mdcache->send_dentry_unlink(dn, straydn ? straydn : nullptr, null_ref, ignore_rmdir_witness);
   }
   
   // bump target popularity
@@ -7988,11 +7992,11 @@ void Server::handle_peer_link_prep(const MDRequestRef& mdr)
     inc = false;
     pi.inode->nlink--;
 
-    if (mds->mdsmap->allow_referent_inodes()) {
+    if (referent_ino > 0) {
       // Remove referent inode from primary inode (targeti)
-      ceph_assert(referent_ino);
       pi.inode->remove_referent_ino(referent_ino);
-      dout(20) << "handle_peer_link_prep " << "referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino removed " << referent_ino << dendl;
+      dout(20) << __func__ <<  " referent_inodes " << std::hex << pi.inode->get_referent_inodes()
+               << " referent ino removed " << referent_ino << dendl;
     }
 
     if (targeti->is_projected_snaprealm_global()) {
@@ -8189,7 +8193,8 @@ void Server::do_link_rollback(bufferlist &rbl, mds_rank_t leader, const MDReques
     pi.inode->nlink++;
     if (rollback.referent_ino) {
       pi.inode->add_referent_ino(rollback.referent_ino);
-      dout(10) << "do_link_rollback " << "referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino added " << rollback.referent_ino << dendl;
+      dout(10) << __func__ << " referent_inodes " << std::hex << pi.inode->get_referent_inodes()
+               << " referent ino added " << rollback.referent_ino << dendl;
     }
   }
 
@@ -8354,7 +8359,7 @@ void Server::handle_client_unlink(const MDRequestRef& mdr)
     if (!straydn)
       return;
     mdr->referent_straydn = true;
-    dout(10) << " referent straydn is " << *straydn << dendl;
+    dout(10) << __func__ << " referent straydn is " << *straydn << dendl;
   } else if (mdr->straydn) {
     mdr->unpin(mdr->straydn);
     mdr->straydn = NULL;
@@ -8515,7 +8520,8 @@ void Server::_unlink_local(const MDRequestRef& mdr, CDentry *dn, CDentry *strayd
   // Remove referent inode from primary link
   if (dnl->is_referent_remote()) {
     pi.inode->remove_referent_ino(ref_in->ino());
-    dout(20) << "_unlink_local " << "referent_inodes " << std::hex << pi.inode->get_referent_inodes() << " referent ino removed " << ref_in->ino() << dendl;
+    dout(20) << __func__ << " referent_inodes " << std::hex << pi.inode->get_referent_inodes()
+             << " referent ino removed " << ref_in->ino() << dendl;
   }
 
   if (mdr->more()->desti_srnode) {
@@ -8534,7 +8540,7 @@ void Server::_unlink_local(const MDRequestRef& mdr, CDentry *dn, CDentry *strayd
 
       pi.inode->update_backtrace();
       le->metablob.add_primary_dentry(straydn, in, true, true);
-    } else {
+    } else if (dnl->is_referent_remote()) {
       // referent remote link - to purge the referent inode created
       auto pri = ref_in->project_inode(mdr);
       {
@@ -8544,9 +8550,9 @@ void Server::_unlink_local(const MDRequestRef& mdr, CDentry *dn, CDentry *strayd
       }
       pri.inode->version = ref_in->pre_dirty();
       // Purge enqueue requires inode to be primary and nlink to be 0
-      pri.inode->nlink--;
-      if (pri.inode->nlink == 0)
-        ref_in->state_set(CInode::STATE_ORPHAN);
+      // link count is never > 1 for referent inode, just set it to 0
+      pri.inode->nlink = 0;
+      ref_in->state_set(CInode::STATE_ORPHAN);
       mdcache->predirty_journal_parents(mdr, &le->metablob, ref_in, straydn->get_dir(), PREDIRTY_PRIMARY|PREDIRTY_DIR, 1);
       pri.inode->update_backtrace();
       le->metablob.add_primary_dentry(straydn, ref_in, true, true);
@@ -8604,7 +8610,8 @@ void Server::_unlink_local_finish(const MDRequestRef& mdr,
       strayin = dn->get_linkage()->get_inode();
       hadrealm = strayin->snaprealm ? true : false;
       strayin->early_pop_projected_snaprealm();
-    } else {
+    } else if (dn->get_linkage()->is_referent_remote()) {
+      // No snapshots on referent inodes - Ignore snaprealm related stuff for referent inodes
       strayin = dn->get_linkage()->get_referent_inode();
       ignore_rmdir_witness = false;
     }

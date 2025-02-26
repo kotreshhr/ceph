@@ -11656,7 +11656,7 @@ void MDCache::handle_dentry_unlink(const cref_t<MDentryUnlink> &m)
 
       // open inode?
       if (dnl->is_primary()) {
-        dout(7) << __func__ << " primary " << *dn << dendl;
+        dout(7) << __func__ << " primary dentry " << *dn << dendl;
 	CInode *in = dnl->get_inode();
 	dn->dir->unlink_inode(dn);
 	ceph_assert(straydn);
@@ -11686,7 +11686,7 @@ void MDCache::handle_dentry_unlink(const cref_t<MDentryUnlink> &m)
 	
 	straydn = NULL;
       } else if (dnl->is_referent_remote()) {
-        dout(7) << __func__ << " referent " << *dn << dendl;
+        dout(7) << __func__ << " remote referent dentry " << *dn << dendl;
 	CInode *ref_in = dnl->get_referent_inode();
 	dn->dir->unlink_inode(dn);
 	ceph_assert(straydn);
@@ -11697,14 +11697,14 @@ void MDCache::handle_dentry_unlink(const cref_t<MDentryUnlink> &m)
 	ceph_assert(straydn->first >= ref_in->first);
 	ref_in->first = straydn->first;
 
-	//TODO: Snap realm invalidate on referent ??
+	//No snapshots on referent - ignore snaprealm invalidate
 
 	// send caps to auth (if we're not already)
 	if (ref_in->is_any_caps() &&
 	    !ref_in->state_test(CInode::STATE_EXPORTINGCAPS))
 	  migrator->export_caps(ref_in);
 
-	straydn = NULL;
+	straydn = nullptr;
       } else {
 	ceph_assert(!straydn);
 	ceph_assert(dnl->is_remote());

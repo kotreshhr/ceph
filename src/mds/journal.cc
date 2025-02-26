@@ -2665,7 +2665,8 @@ void rename_rollback::drec::decode(bufferlist::const_iterator &bl)
   decode(dname, bl);
   decode(remote_d_type, bl);
   decode(old_ctime, bl);
-  decode(referent_ino, bl);
+  if (struct_v >= 3)
+    decode(referent_ino, bl);
   DECODE_FINISH(bl);
 }
 

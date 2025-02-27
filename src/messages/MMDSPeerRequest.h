@@ -20,7 +20,7 @@
 #include "messages/MMDSOp.h"
 
 class MMDSPeerRequest final : public MMDSOp {
-  static constexpr int HEAD_VERSION = 1;
+  static constexpr int HEAD_VERSION = 2;
   static constexpr int COMPAT_VERSION = 1;
 public:
   static constexpr int OP_XLOCK =       1;
@@ -218,7 +218,8 @@ public:
     decode(srci_snapbl, p);
     decode(desti_snapbl, p);
     decode(alternate_name, p);
-    decode(referent_ino, p);
+    if (header.version >= 2)
+      decode(referent_ino, p);
   }
 
   std::string_view get_type_name() const override { return "peer_request"; }

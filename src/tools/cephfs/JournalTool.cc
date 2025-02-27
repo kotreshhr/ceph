@@ -969,7 +969,7 @@ int JournalTool::recover_dentries(
           << rb.referent_ino << " referent_inode " << rb.referent_inode
 	  << "rb.ino " << rb.ino << dendl;
 
-	if (rb.referent_ino !=0) {
+	if (rb.referent_ino != 0) {
           dout(4) << "writing 'r' (referent remote) dentry " << key
 	    << " into frag " << frag_oid.name << dendl;
 
@@ -1261,6 +1261,7 @@ void JournalTool::encode_remotebit_as_referent_inode(
   // Serialize InodeStore
   new_inode.encode(*out_bl, CEPH_FEATURES_SUPPORTED_DEFAULT);
 }
+
 /**
  * Given a list of inode numbers known to be in use by
  * inodes in the backing store, ensure that none of these

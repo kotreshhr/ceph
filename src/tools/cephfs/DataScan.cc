@@ -1241,16 +1241,16 @@ int DataScan::scan_links()
 	    }
 
 	    if (step == SCAN_INOS) {
-	        dout(20) << "Add referent inode dentry 0x" << std::hex << dir_ino << std::dec << "/" << dname << " to used_inos" << dendl;
-		used_inos.insert(referent_ino);
-	        dout(20) << "Add referent inode dentry 0x" << std::hex << dir_ino << std::dec << "/" << dname << " to remote_links" << dendl;
-		remote_links[ino]++;
-		referent_inodes[ino].push_back(referent_ino);
-	        dout(20) << "Added referent inode " << referent_ino << " of dentry 0x"
-                         << std::hex << dir_ino << std::dec << "/" << dname
-                         << " to referent_inodes list of primary inode " << ino
-			 << " referent_inode list after addition " << referent_inodes[ino]
-                         << dendl;
+	      dout(20) << "Add referent inode dentry 0x" << std::hex << dir_ino << std::dec << "/" << dname << " to used_inos" << dendl;
+              used_inos.insert(referent_ino);
+              dout(20) << "Add referent inode dentry 0x" << std::hex << dir_ino << std::dec << "/" << dname << " to remote_links" << dendl;
+              remote_links[ino]++;
+              referent_inodes[ino].push_back(referent_ino);
+              dout(20) << "Added referent inode " << referent_ino << " of dentry 0x"
+                       << std::hex << dir_ino << std::dec << "/" << dname
+                       << " to referent_inodes list of primary inode " << ino
+                       << " referent_inode list after addition " << referent_inodes[ino]
+                       << dendl;
 	    } else if (step == CHECK_LINK) {
 	      if (dnfirst == CEPH_NOSNAP) {
                 injected_inos[referent_ino] = link_info_t(dir_ino, frag_id, dname, inode.inode);
@@ -1712,6 +1712,7 @@ int MetadataTool::read_dentry(inodeno_t parent_ino, frag_t frag,
     if (dentry_type == 'I' || dentry_type == 'i' || dentry_type == 'R' || dentry_type == 'r') {
       if (dentry_type == 'i' || dentry_type == 'r') {
         mempool::mds_co::string alternate_name;
+
         DECODE_START(2, q);
         if (struct_v >= 2)
           decode(alternate_name, q);

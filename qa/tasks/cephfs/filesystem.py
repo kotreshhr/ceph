@@ -657,6 +657,9 @@ class FilesystemBase(MDSClusterBase):
     def set_allow_new_snaps(self, yes):
         self.set_var("allow_new_snaps", yes, '--yes-i-really-mean-it')
 
+    def set_allow_referent_inodes(self, yes):
+        self.set_var("allow_referent_inodes", yes)
+
     def set_bal_rank_mask(self, bal_rank_mask):
         self.set_var("bal_rank_mask", bal_rank_mask)
 
@@ -1309,10 +1312,7 @@ class FilesystemBase(MDSClusterBase):
         if skip != 0 :
             args.extend(["skip", str(skip)])
         args.extend(['import', '-', 'decode', 'dump_json'])
-        try:
-          p = self.mon_manager.controller.run(args=args, stdin=BytesIO(obj_blob), stdout=BytesIO())
-        except Exception:
-            time.sleep(500)
+        p = self.mon_manager.controller.run(args=args, stdin=BytesIO(obj_blob), stdout=BytesIO())
 
         return p.stdout.getvalue()
 
@@ -1532,7 +1532,7 @@ class FilesystemBase(MDSClusterBase):
 
     def read_meta_inode(self, dir_ino, file_name, pool=None):
         """
-        Get referent_inode list from the primary file
+        Get decoded in-memory inode from the metadata pool
         """
         if pool is None:
             pool = self.get_metadata_pool_name()
@@ -1543,7 +1543,6 @@ class FilesystemBase(MDSClusterBase):
             proc = self.rados(args, pool=pool, stdout=BytesIO())
         except CommandFailedError as e:
             log.error(e.__str__())
-            time.sleep(500)
             raise ObjectNotFound(dirfrag_obj_name)
 
         obj_blob = proc.stdout.getvalue()

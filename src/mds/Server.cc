@@ -7411,7 +7411,7 @@ void Server::handle_client_link(const MDRequestRef& mdr)
     mdr->pin(targeti);
     // Load referent inodes since path traverse not happening on targeti
     CF_MDS_RetryRequestFactory cf(mdcache, mdr, true);
-    dout(15) << "handle_client_link " << "only targeti received - no path, loading referent inodes of " << *targeti << dendl;
+    dout(15) << __func__ << " only targeti received - no path, loading referent inodes of " << *targeti << dendl;
     if (mdcache->load_referent_inodes(targeti, cf, true) != 0)
       return;
 

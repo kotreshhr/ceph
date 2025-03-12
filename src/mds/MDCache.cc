@@ -8490,6 +8490,28 @@ void MDCache::dispatch(const cref_t<Message> &m)
   }
 }
 
+int MDCache::load_referent_inodes(CInode *in, MDSContextFactory& cf, bool ignore_error)
+{
+  ceph_assert(in);
+  // Only required when global snaprealm is not being used
+  if (!mds->mdsmap->use_global_snaprealm() && !in->get_inode()->referent_inodes.empty())
+    dout(12) << __func__ << " loading referent inodes of primary real inode of hardlink " << *in << dendl;
+  else
+    return 0;
+
+  for (const auto& ri : in->get_inode()->referent_inodes) {
+    dout(12) << __func__ << " loading referent inode " << std::hex << ri << dendl;
+    CInode *cur_ref_in = get_inode(ri);
+    if (!cur_ref_in) {
+      dout(7) << __func__ << " referent inode is not loaded, open referent inode " << std::hex << ri << dendl;
+      open_remote_referent(ri, cf.build(), false, ignore_error);
+      return 1;
+    }
+    dout(12) << __func__ << " referent inode found in memory " << std::hex << ri << dendl;
+  }
+  return 0;
+}
+
 /**
  * In 246f647566095c173e5e0e54661696cea230f96e, an updated rule for locking order
  * was established (differing from past strategies):
@@ -8507,27 +8529,6 @@ void MDCache::dispatch(const cref_t<Message> &m)
  *   5. Lock non-directory inodes according to inode numbers, in ascending
  *      order.
  */
-
-int MDCache::load_referent_inodes(CInode *in, MDSContextFactory& cf, bool ignore_error)
-{
-  ceph_assert(in);
-  if (!in->get_inode()->referent_inodes.empty())
-    dout(12) << "traverse: loading referent inodes of primary real inode of hardlink " << *in << dendl;
-  else
-    return 0;
-
-  for (const auto& ri : in->get_inode()->referent_inodes) {
-    dout(12) << "traverse: loading referent inode " << std::hex << ri << dendl;
-    CInode *cur_ref_in = get_inode(ri);
-    if (!cur_ref_in) {
-      dout(7) << "traverse: referent inode is not loaded, open referent inode " << std::hex << ri << dendl;
-      open_remote_referent(ri, cf.build(), false, ignore_error);
-      return 1;
-    }
-    dout(12) << "traverse: referent inode found in memory " << std::hex << ri << dendl;
-  }
-  return 0;
-}
 
 int MDCache::path_traverse(const MDRequestRef& mdr, MDSContextFactory& cf,
                            const filepath& path, int flags,

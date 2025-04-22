@@ -242,7 +242,7 @@ const SnapContext& SnapRealm::get_snap_context(std::vector<SnapRealm*>& related_
       snaps_size+= r_realm->srnode.snaps.size();
       if (rr_max_seq < r_realm->srnode.seq)
         rr_max_seq = r_realm->srnode.seq;
-      dout(20) << "get_snap_context related_realm " << r_realm << " snap size " << snaps_size  << " max seq " << rr_max_seq << dendl;
+      dout(20) << __func__ << ": related_realm " << r_realm << " snap size " << snaps_size  << " max seq " << rr_max_seq << dendl;
     }
 
     cached_snap_context.seq = rr_max_seq;

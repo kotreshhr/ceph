@@ -93,7 +93,7 @@
     "@angular-eslint/template-parser": "18.4.0",
     "@angular/cli": "18.2.11",
     "@angular/compiler-cli": "18.2.11",
-    "@angular/language-service": "18.2.11",
+    "@angular/language-service": "19.2.10",
     "@applitools/eyes-cypress": "3.22.5",
     "@compodoc/compodoc": "1.1.18",
     "@cypress/browserify-preprocessor": "3.0.2",

@@ -438,8 +438,8 @@ class TestVolumesHelper(CephFSTestCase):
             self._fs_cmd("subvolume", "rm", self.volname, f"{subvolname}_{i}", group)
         self._fs_cmd("subvolumegroup", "rm", self.volname, group)
         if root_snapped:
-            self.mount_a.run_shell(['rmdir', './.snap/root_s1'])
-            self.mount_a.run_shell(['rmdir', './.snap/root_s2'])
+            self.mount_a.run_shell(['sudo', 'rmdir', './.snap/root_s1'])
+            self.mount_a.run_shell(['sudo', 'rmdir', './.snap/root_s2'])
 
     def _create_subvolumes_and_snapshots(self, group, subvolname, snapshot, snap_root=False):
         # create group.

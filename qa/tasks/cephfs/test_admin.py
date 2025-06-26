@@ -1812,15 +1812,28 @@ class TestFsAuthorize(CephFSTestCase):
         keyring_path = self.mount_b.client_remote.mktemp(data=keyring)
         self.mount_b.remount(client_id=self.client_id, client_keyring_path=keyring_path, cephfs_name=self.fs2.name)
 
-        # Client on fs1 - validate 'rw' access
-        captester_fs1_rw.conduct_pos_test_for_read_caps()
-        captester_fs1_rw.conduct_pos_test_for_write_caps()
-        captester_fs1_rw.conduct_pos_test_for_new_file_creation()
-
         # Client on fs2 should not have 'rw' access
         captester_fs2_r.conduct_pos_test_for_read_caps()
         captester_fs2_r.conduct_neg_test_for_write_caps()
         captester_fs2_r.conduct_neg_test_for_new_file_creation()
+
+        # Client on fs1 - validate 'rw' access
+        ceph_client_version = None
+        tasks = self.ctx.config.get('tasks', [])
+        for task in tasks:
+            if 'install' == task:
+                ceph_client_version = task.get('tag', None)
+                break
+
+        captester_fs1_rw.conduct_pos_test_for_read_caps()
+        # The multifs auth caps bug has a fix both in client and mds
+        # If it's old client and not patched, we expect that the fs
+        # with 'rw' would end up having 'r' caps with the multifs
+        # auth caps used as in this test above.
+        if ceph_client_version == "v19.2.2":
+            captester_fs1_rw.conduct_pos_test_for_write_caps()
+            captester_fs1_rw.conduct_pos_test_for_new_file_creation()
+
 
     def test_multifs_rootsquash_nofeature(self):
         """

@@ -1812,15 +1812,16 @@ class TestFsAuthorize(CephFSTestCase):
         keyring_path = self.mount_b.client_remote.mktemp(data=keyring)
         self.mount_b.remount(client_id=self.client_id, client_keyring_path=keyring_path, cephfs_name=self.fs2.name)
 
+        # Client on fs2 should not have 'rw' access
+        captester_fs2_r.conduct_pos_test_for_read_caps()
+        captester_fs2_r.conduct_neg_test_for_write_caps()
+        captester_fs2_r.conduct_neg_test_for_new_file_creation()
+
         # Client on fs1 - validate 'rw' access
         captester_fs1_rw.conduct_pos_test_for_read_caps()
         captester_fs1_rw.conduct_pos_test_for_write_caps()
         captester_fs1_rw.conduct_pos_test_for_new_file_creation()
 
-        # Client on fs2 should not have 'rw' access
-        captester_fs2_r.conduct_pos_test_for_read_caps()
-        captester_fs2_r.conduct_neg_test_for_write_caps()
-        captester_fs2_r.conduct_neg_test_for_new_file_creation()
 
     def test_multifs_rootsquash_nofeature(self):
         """

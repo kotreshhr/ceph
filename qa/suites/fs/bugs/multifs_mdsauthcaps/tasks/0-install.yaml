@@ -3,6 +3,9 @@ meta:
    install ceph/squid v19.2.2
 tasks:
 - install:
+    # When this ceph version is changed, make sure to fix the testcase
+    # 'test_multifs_single_client_cross_access_r_caps_end' in
+    # qa/tasks/cephfs/test_admin.py
     tag: v19.2.2
 - print: "**** done installing squid v19.2.2"
 - ceph:

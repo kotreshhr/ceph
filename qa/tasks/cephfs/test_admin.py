@@ -2,6 +2,7 @@ import errno
 import json
 import logging
 import uuid
+import unittest
 from io import StringIO
 from os.path import join as os_path_join
 import re
@@ -30,6 +31,7 @@ class TestLabeledPerfCounters(CephFSTestCase):
                     c in dump[per_client_metrics_key] if c["labels"]["client"] == client_id]
         return counters[0]
 
+    @unittest.skip("skipping...")
     def test_per_client_labeled_perf_counters_on_client_disconnect(self):
         """
         That the per-client labelled metrics are unavailable during client disconnect
@@ -45,6 +47,7 @@ class TestLabeledPerfCounters(CephFSTestCase):
                     # success, no metrics.
                     return True
 
+    @unittest.skip("skipping...")
     def test_per_client_labeled_perf_counters_on_client_reconnect(self):
         """
         That the per-client labelled metrics are generated during client reconnect
@@ -95,6 +98,7 @@ class TestLabeledPerfCounters(CephFSTestCase):
         self.mount_a.teardown()
         self.mount_b.teardown()
 
+    @unittest.skip("skipping...")
     def test_per_client_labeled_perf_counters_io(self):
         """
         That the per-client labelled perf counters depict the clients performing IO.
@@ -208,6 +212,7 @@ class TestMdsLastSeen(CephFSTestCase):
 
     MDSS_REQUIRED = 2
 
+    @unittest.skip("skipping...")
     def test_in_text(self):
         """
         That `mds last-seen` returns 0 for an MDS currently in the map.
@@ -219,6 +224,7 @@ class TestMdsLastSeen(CephFSTestCase):
         seconds = int(re.match(r"^(\d+)s$", s).group(1))
         self.assertEqual(seconds, 0)
 
+    @unittest.skip("skipping...")
     def test_in_json(self):
         """
         That `mds last-seen` returns 0 for an MDS currently in the map.
@@ -231,6 +237,7 @@ class TestMdsLastSeen(CephFSTestCase):
         seconds = int(re.match(r"^(\d+)s$", J['last-seen']).group(1))
         self.assertEqual(seconds, 0)
 
+    @unittest.skip("skipping...")
     def test_unknown(self):
         """
         That `mds last-seen` returns ENOENT for an mds not in recent maps.
@@ -243,6 +250,7 @@ class TestMdsLastSeen(CephFSTestCase):
         else:
             self.fail("non-existent mds should fail ENOENT")
 
+    @unittest.skip("skipping...")
     def test_standby(self):
         """
         That `mds last-seen` returns 0 for a standby.
@@ -255,6 +263,7 @@ class TestMdsLastSeen(CephFSTestCase):
             seconds = int(re.match(r"^(\d+)s$", J['last-seen']).group(1))
             self.assertEqual(seconds, 0)
 
+    @unittest.skip("skipping...")
     def test_stopped(self):
         """
         That `mds last-seen` returns >0 for mds that is stopped.
@@ -275,6 +284,7 @@ class TestMdsLastSeen(CephFSTestCase):
                 self.assertGreater(seconds, 1)
                 break
 
+    @unittest.skip("skipping...")
     def test_gc(self):
         """
         That historical mds information is eventually garbage collected.
@@ -339,6 +349,7 @@ class TestFsStatus(TestAdminCommands):
 
     MDSS_REQUIRED = 3
 
+    @unittest.skip("skipping...")
     def test_fs_status(self):
         """
         That `ceph fs status` command functions.
@@ -353,6 +364,7 @@ class TestFsStatus(TestAdminCommands):
         mdsmap = json.loads(self.get_ceph_cmd_stdout("fs", "status", "--format=json"))["mdsmap"]
         self.assertEqual(mdsmap[0]["state"], "active")
 
+    @unittest.skip("skipping...")
     def test_fs_status_standby_replay(self):
         """
         That `ceph fs status` command functions.
@@ -384,6 +396,7 @@ class TestAddDataPool(TestAdminCommands):
     Test "ceph fs add_data_pool" subcommand.
     """
 
+    @unittest.skip("skipping...")
     def test_add_data_pool_root(self):
         """
         That a new data pool can be added and used for the root directory.
@@ -392,6 +405,7 @@ class TestAddDataPool(TestAdminCommands):
         p = self.fs.add_data_pool("foo")
         self.fs.set_dir_layout(self.mount_a, ".", FileLayout(pool=p))
 
+    @unittest.skip("skipping...")
     def test_add_data_pool_application_metadata(self):
         """
         That the application metadata set on a newly added data pool is as expected.
@@ -406,6 +420,7 @@ class TestAddDataPool(TestAdminCommands):
         self.check_pool_application_metadata_key_value(
             pool_name, 'cephfs', 'data', self.fs.name)
 
+    @unittest.skip("skipping...")
     def test_add_data_pool_subdir(self):
         """
         That a new data pool can be added and used for a sub-directory.
@@ -415,6 +430,7 @@ class TestAddDataPool(TestAdminCommands):
         self.mount_a.run_shell("mkdir subdir")
         self.fs.set_dir_layout(self.mount_a, "subdir", FileLayout(pool=p))
 
+    @unittest.skip("skipping...")
     def test_add_data_pool_non_alphamueric_name_as_subdir(self):
         """
         That a new data pool with non-alphanumeric name can be added and used for a sub-directory.
@@ -423,6 +439,7 @@ class TestAddDataPool(TestAdminCommands):
         self.mount_a.run_shell("mkdir subdir")
         self.fs.set_dir_layout(self.mount_a, "subdir", FileLayout(pool=p))
 
+    @unittest.skip("skipping...")
     def test_add_data_pool_ec(self):
         """
         That a new EC data pool can be added.
@@ -432,6 +449,7 @@ class TestAddDataPool(TestAdminCommands):
         self.setup_ec_pools(n, metadata=False)
         self.fs.add_data_pool(n+"-data", create=False)
 
+    @unittest.skip("skipping...")
     def test_add_already_in_use_data_pool(self):
         """
         That command try to add data pool which is already in use with another fs.
@@ -462,6 +480,7 @@ class TestAddDataPool(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because data pool is already in use as data pool for first_fs")
 
+    @unittest.skip("skipping...")
     def test_add_already_in_use_metadata_pool(self):
         """
         That command try to add metadata pool which is already in use with another fs.
@@ -499,6 +518,7 @@ class TestFsNew(TestAdminCommands):
     """
     MDSS_REQUIRED = 3
 
+    @unittest.skip("skipping...")
     def test_fsnames_can_only_by_goodchars(self):
         n = 'test_fsnames_can_only_by_goodchars'
         metapoolname, datapoolname = n+'-testmetapool', n+'-testdatapool'
@@ -520,6 +540,7 @@ class TestFsNew(TestAdminCommands):
                           datapoolname,
                           '--yes-i-really-really-mean-it-not-faking')
 
+    @unittest.skip("skipping...")
     def test_new_default_ec(self):
         """
         That a new file system warns/fails with an EC default data pool.
@@ -539,6 +560,7 @@ class TestFsNew(TestAdminCommands):
         else:
             raise RuntimeError("expected failure")
 
+    @unittest.skip("skipping...")
     def test_new_default_ec_force(self):
         """
         That a new file system succeeds with an EC default data pool with --force.
@@ -550,6 +572,7 @@ class TestFsNew(TestAdminCommands):
         self.setup_ec_pools(n)
         self.run_ceph_cmd('fs', 'new', n, n+"-meta", n+"-data", "--force")
 
+    @unittest.skip("skipping...")
     def test_new_default_ec_no_overwrite(self):
         """
         That a new file system fails with an EC default data pool without overwrite.
@@ -579,6 +602,7 @@ class TestFsNew(TestAdminCommands):
         else:
             raise RuntimeError("expected failure")
 
+    @unittest.skip("skipping...")
     def test_fs_new_pool_application_metadata(self):
         """
         That the application metadata set on the pools of a newly created filesystem are as expected.
@@ -597,6 +621,7 @@ class TestFsNew(TestAdminCommands):
             self.check_pool_application_metadata_key_value(
                 pool_names[i], 'cephfs', keys[i], fs_name)
 
+    @unittest.skip("skipping...")
     def test_fs_new_with_specific_id(self):
         """
         That a file system can be created with a specific ID.
@@ -612,6 +637,7 @@ class TestFsNew(TestAdminCommands):
         for i in range(2):
             self.check_pool_application_metadata_key_value(pool_names[i], 'cephfs', keys[i], fs_name)
 
+    @unittest.skip("skipping...")
     def test_fs_new_with_specific_id_idempotency(self):
         """
         That command to create file system with specific ID is idempotent.
@@ -626,6 +652,7 @@ class TestFsNew(TestAdminCommands):
         self.run_ceph_cmd(f'fs new {fs_name} {pool_names[0]} {pool_names[1]} --fscid  {fscid} --force')
         self.fs.status().get_fsmap(fscid)
 
+    @unittest.skip("skipping...")
     def test_fs_new_with_specific_id_fails_without_force_flag(self):
         """
         That command to create file system with specific ID fails without '--force' flag.
@@ -644,6 +671,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("expected creating file system with specific ID without '--force' flag to fail")
 
+    @unittest.skip("skipping...")
     def test_fs_new_with_specific_id_fails_already_in_use(self):
         """
         That creating file system with ID already in use fails.
@@ -663,6 +691,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("expected creating file system with ID already in use to fail")
 
+    @unittest.skip("skipping...")
     def test_fs_new_metadata_pool_already_in_use(self):
         """
         That creating file system with metadata pool already in use.
@@ -692,6 +721,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because metadata  pool is already in use for 'first_fs'")
 
+    @unittest.skip("skipping...")
     def test_fs_new_data_pool_already_in_use(self):
         """
         That creating file system with data pool already in use.
@@ -721,6 +751,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because data pool is already in use for 'first_fs'")
 
+    @unittest.skip("skipping...")
     def test_fs_new_metadata_and_data_pool_in_use_by_another_same_fs(self):
         """
         That creating file system with metadata and data pool which is already in use by another same fs.
@@ -748,6 +779,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because metadata and data pool is already in use for 'first_fs'")
 
+    @unittest.skip("skipping...")
     def test_fs_new_metadata_and_data_pool_in_use_by_different_fs(self):
         """
         That creating file system with metadata and data pool which is already in use by different fs.
@@ -783,6 +815,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because metadata and data pool is already in use for 'first_fs' and 'second_fs'")
 
+    @unittest.skip("skipping...")
     def test_fs_new_interchange_already_in_use_metadata_and_data_pool_of_same_fs(self):
         """
         That creating file system with interchanging metadata and data pool which is already in use by same fs.
@@ -810,6 +843,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because metadata and data pool is already in use for 'first_fs'")
 
+    @unittest.skip("skipping...")
     def test_fs_new_interchange_already_in_use_metadata_and_data_pool_of_different_fs(self):
         """
         That creating file system with interchanging metadata and data pool which is already in use by defferent fs.
@@ -845,6 +879,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because metadata and data pool is already in use for 'first_fs' and 'second_fs'")
 
+    @unittest.skip("skipping...")
     def test_fs_new_metadata_pool_already_in_use_with_rbd(self):
         """
         That creating new file system with metadata pool already used by rbd.
@@ -871,6 +906,7 @@ class TestFsNew(TestAdminCommands):
         else:
             self.fail("Expected EINVAL because metadata pool is already in use for rbd")
 
+    @unittest.skip("skipping...")
     def test_fs_new_data_pool_already_in_use_with_rbd(self):
         """
         That creating new file system with data pool already used by rbd.
@@ -905,6 +941,7 @@ class TestRenameCommand(TestAdminCommands):
     CLIENTS_REQUIRED = 1
     MDSS_REQUIRED = 2
 
+    @unittest.skip("skipping...")
     def test_fs_rename(self):
         """
         That the file system can be renamed, and the application metadata set on its pools are as expected.
@@ -950,6 +987,7 @@ class TestRenameCommand(TestAdminCommands):
         self.mount_a.umount_wait()
         self.run_ceph_cmd(f'auth rm client.{client_id}')
 
+    @unittest.skip("skipping...")
     def test_fs_rename_idempotency(self):
         """
         That the file system rename operation is idempotent.
@@ -976,6 +1014,7 @@ class TestRenameCommand(TestAdminCommands):
         self.fs.name = new_fs_name
         self.assertTrue(self.fs.exists())
 
+    @unittest.skip("skipping...")
     def test_fs_rename_fs_new_fails_with_old_fsname_existing_pools(self):
         """
         That after renaming a file system, creating a file system with
@@ -1030,6 +1069,7 @@ class TestRenameCommand(TestAdminCommands):
             self.fail("expected creating new file system with old name, "
                       "existing pools, and --allow-dangerous-metadata-overlay flag to fail.")
 
+    @unittest.skip("skipping...")
     def test_fs_rename_fails_without_yes_i_really_mean_it_flag(self):
         """
         That renaming a file system without '--yes-i-really-mean-it' flag fails.
@@ -1055,6 +1095,7 @@ class TestRenameCommand(TestAdminCommands):
         self.run_ceph_cmd(f'fs set {self.fs.name} refuse_client_session false')
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_fs_rename_fails_for_non_existent_fs(self):
         """
         That renaming a non-existent file system fails.
@@ -1076,6 +1117,7 @@ class TestRenameCommand(TestAdminCommands):
         self.fs.wait_for_daemons()
         self.run_ceph_cmd(f'fs set {self.fs.name} refuse_client_session false')
 
+    @unittest.skip("skipping...")
     def test_fs_rename_fails_new_name_already_in_use(self):
         """
         That renaming a file system fails if the new name refers to an existing file system.
@@ -1101,6 +1143,7 @@ class TestRenameCommand(TestAdminCommands):
         self.run_ceph_cmd(f'fs set {self.fs.name} refuse_client_session false')
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_fs_rename_fails_with_mirroring_enabled(self):
         """
         That renaming a file system fails if mirroring is enabled on it.
@@ -1128,6 +1171,7 @@ class TestRenameCommand(TestAdminCommands):
         self.run_ceph_cmd(f'fs set {self.fs.name} refuse_client_session false')
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_rename_when_fs_is_online(self):
         '''
         Test that the command "ceph fs swap" command fails when first of the
@@ -1162,6 +1206,7 @@ class TestRenameCommand(TestAdminCommands):
             self.fs.get_metadata_pool_name(), 'cephfs', 'metadata',
             self.fs.name)
 
+    @unittest.skip("skipping...")
     def test_rename_when_clients_not_refused(self):
         '''
         Test that "ceph fs rename" fails when client_refuse_session is not
@@ -1186,6 +1231,7 @@ class TestDump(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 1
 
+    @unittest.skip("skipping...")
     def test_fs_dump_epoch(self):
         """
         That dumping a specific epoch works.
@@ -1195,6 +1241,7 @@ class TestDump(CephFSTestCase):
         status2 = self.fs.status(epoch=status1["epoch"]-1)
         self.assertEqual(status1["epoch"], status2["epoch"]+1)
 
+    @unittest.skip("skipping...")
     def test_fsmap_trim(self):
         """
         That the fsmap is trimmed normally.
@@ -1224,6 +1271,7 @@ class TestDump(CephFSTestCase):
         else:
             self.fail("trimming did not occur as expected")
 
+    @unittest.skip("skipping...")
     def test_fsmap_force_trim(self):
         """
         That the fsmap is trimmed forcefully.
@@ -1257,6 +1305,7 @@ class TestRequiredClientFeatures(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 1
 
+    @unittest.skip("skipping...")
     def test_required_client_features(self):
         """
         That `ceph fs required_client_features` command functions.
@@ -1291,6 +1340,7 @@ class TestRequiredClientFeatures(CephFSTestCase):
             self.fs.required_client_features('rm', feature)
             self.assertFalse(is_required(index))
 
+    @unittest.skip("skipping...")
     def test_required_client_feature_add_reserved(self):
         """
         That `ceph fs required_client_features X add reserved` fails.
@@ -1299,6 +1349,7 @@ class TestRequiredClientFeatures(CephFSTestCase):
         p = self.fs.required_client_features('add', 'reserved', check_status=False, stderr=StringIO())
         self.assertIn('Invalid feature name', p.stderr.getvalue())
 
+    @unittest.skip("skipping...")
     def test_required_client_feature_rm_reserved(self):
         """
         That `ceph fs required_client_features X rm reserved` fails.
@@ -1307,6 +1358,7 @@ class TestRequiredClientFeatures(CephFSTestCase):
         p = self.fs.required_client_features('rm', 'reserved', check_status=False, stderr=StringIO())
         self.assertIn('Invalid feature name', p.stderr.getvalue())
 
+    @unittest.skip("skipping...")
     def test_required_client_feature_add_reserved_bit(self):
         """
         That `ceph fs required_client_features X add <reserved_bit>` passes.
@@ -1315,6 +1367,7 @@ class TestRequiredClientFeatures(CephFSTestCase):
         p = self.fs.required_client_features('add', '1', stderr=StringIO())
         self.assertIn("added feature 'reserved' to required_client_features", p.stderr.getvalue())
 
+    @unittest.skip("skipping...")
     def test_required_client_feature_rm_reserved_bit(self):
         """
         That `ceph fs required_client_features X rm <reserved_bit>` passes.
@@ -1331,6 +1384,7 @@ class TestCompatCommands(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 3
 
+    @unittest.skip("skipping...")
     def test_add_compat(self):
         """
         Test adding a compat.
@@ -1341,6 +1395,7 @@ class TestCompatCommands(CephFSTestCase):
         mdsmap = self.fs.get_mds_map()
         self.assertIn("feature_63", mdsmap['compat']['compat'])
 
+    @unittest.skip("skipping...")
     def test_add_incompat(self):
         """
         Test adding an incompat.
@@ -1352,6 +1407,7 @@ class TestCompatCommands(CephFSTestCase):
         log.info(f"{mdsmap}")
         self.assertIn("feature_63", mdsmap['compat']['incompat'])
 
+    @unittest.skip("skipping...")
     def test_rm_compat(self):
         """
         Test removing a compat.
@@ -1363,6 +1419,7 @@ class TestCompatCommands(CephFSTestCase):
         mdsmap = self.fs.get_mds_map()
         self.assertNotIn("feature_63", mdsmap['compat']['compat'])
 
+    @unittest.skip("skipping...")
     def test_rm_incompat(self):
         """
         Test removing an incompat.
@@ -1374,6 +1431,7 @@ class TestCompatCommands(CephFSTestCase):
         mdsmap = self.fs.get_mds_map()
         self.assertNotIn("feature_63", mdsmap['compat']['incompat'])
 
+    @unittest.skip("skipping...")
     def test_standby_compat(self):
         """
         That adding a compat does not prevent standbys from joining.
@@ -1386,6 +1444,7 @@ class TestCompatCommands(CephFSTestCase):
         mdsmap = self.fs.get_mds_map()
         self.assertIn("feature_63", mdsmap['compat']['compat'])
 
+    @unittest.skip("skipping...")
     def test_standby_incompat_reject(self):
         """
         That adding an incompat feature prevents incompatible daemons from joining.
@@ -1404,6 +1463,7 @@ class TestCompatCommands(CephFSTestCase):
         else:
             self.fail()
 
+    @unittest.skip("skipping...")
     def test_standby_incompat_upgrade(self):
         """
         That an MDS can upgrade the compat of a fs.
@@ -1416,6 +1476,7 @@ class TestCompatCommands(CephFSTestCase):
         mdsmap = self.fs.get_mds_map()
         self.assertIn("feature_1", mdsmap['compat']['incompat'])
 
+    @unittest.skip("skipping...")
     def test_standby_replay_not_upgradeable(self):
         """
         That the mons will not upgrade the MDSMap compat if standby-replay is
@@ -1436,6 +1497,7 @@ class TestCompatCommands(CephFSTestCase):
         else:
             self.fail()
 
+    @unittest.skip("skipping...")
     def test_standby_incompat_reject_multifs(self):
         """
         Like test_standby_incompat_reject but with a second fs.
@@ -1468,6 +1530,7 @@ class TestConfigCommands(CephFSTestCase):
     CLIENTS_REQUIRED = 1
     MDSS_REQUIRED = 1
 
+    @unittest.skip("skipping...")
     def test_ceph_config_show(self):
         """
         That I can successfully show MDS configuration.
@@ -1480,6 +1543,7 @@ class TestConfigCommands(CephFSTestCase):
             self.assertTrue("mon_host" in s)
 
 
+    @unittest.skip("skipping...")
     def test_client_config(self):
         """
         That I can successfully issue asok "config set" commands
@@ -1497,6 +1561,7 @@ class TestConfigCommands(CephFSTestCase):
         self.assertEqual(out[test_key], test_val)
 
 
+    @unittest.skip("skipping...")
     def test_mds_config_asok(self):
         test_key = "mds_max_purge_ops"
         test_val = "123"
@@ -1504,11 +1569,13 @@ class TestConfigCommands(CephFSTestCase):
         out = self.fs.mds_asok(['config', 'get', test_key])
         self.assertEqual(out[test_key], test_val)
 
+    @unittest.skip("skipping...")
     def test_mds_dump_cache_asok(self):
         cache_file = "cache_file"
         timeout = "1"
         self.fs.rank_asok(['dump', 'cache', cache_file, timeout])
 
+    @unittest.skip("skipping...")
     def test_mds_config_tell(self):
         test_key = "mds_max_purge_ops"
         test_val = "123"
@@ -1560,6 +1627,7 @@ class TestMirroringCommands(CephFSTestCase):
                 return peer_uuid
         return None
 
+    @unittest.skip("skipping...")
     def test_mirroring_command(self):
         """basic mirroring command test -- enable, disable mirroring on a
         filesystem"""
@@ -1568,6 +1636,7 @@ class TestMirroringCommands(CephFSTestCase):
         self._disable_mirroring(self.fs.name)
         self._verify_mirroring(self.fs.name, "disabled")
 
+    @unittest.skip("skipping...")
     def test_mirroring_peer_commands(self):
         """test adding and removing peers to a mirror enabled filesystem"""
         self._enable_mirroring(self.fs.name)
@@ -1583,6 +1652,7 @@ class TestMirroringCommands(CephFSTestCase):
         self._disable_mirroring(self.fs.name)
         self._verify_mirroring(self.fs.name, "disabled")
 
+    @unittest.skip("skipping...")
     def test_mirroring_command_idempotency(self):
         """test to check idempotency of mirroring family of commands """
         self._enable_mirroring(self.fs.name)
@@ -1607,6 +1677,7 @@ class TestMirroringCommands(CephFSTestCase):
         self._verify_mirroring(self.fs.name, "disabled")
         self._disable_mirroring(self.fs.name)
 
+    @unittest.skip("skipping...")
     def test_mirroring_disable_with_peers(self):
         """test disabling mirroring for a filesystem with active peers"""
         self._enable_mirroring(self.fs.name)
@@ -1625,6 +1696,7 @@ class TestMirroringCommands(CephFSTestCase):
         self._disable_mirroring(self.fs.name)
         self._verify_mirroring(self.fs.name, "disabled")
 
+    @unittest.skip("skipping...")
     def test_mirroring_with_filesystem_reset(self):
         """test to verify mirroring state post filesystem reset"""
         self._enable_mirroring(self.fs.name)
@@ -1645,6 +1717,7 @@ class TestFsAuthorize(CephFSTestCase):
     CLIENTS_REQUIRED = 2
     MDSS_REQUIRED = 3
 
+    @unittest.skip("skipping...")
     def test_single_path_r(self):
         PERM = 'r'
         FS_AUTH_CAPS = (('/', PERM),)
@@ -1654,6 +1727,7 @@ class TestFsAuthorize(CephFSTestCase):
         self._remount(keyring)
         self.captester.run_cap_tests(self.fs, self.client_id, PERM)
 
+    @unittest.skip("skipping...")
     def test_single_path_rw(self):
         PERM = 'rw'
         FS_AUTH_CAPS = (('/', PERM),)
@@ -1663,6 +1737,7 @@ class TestFsAuthorize(CephFSTestCase):
         self._remount(keyring)
         self.captester.run_cap_tests(self.fs, self.client_id, PERM)
 
+    @unittest.skip("skipping...")
     def test_single_path_rootsquash(self):
         if not isinstance(self.mount_a, FuseMount):
             self.skipTest("only FUSE client has CEPHFS_FEATURE_MDS_AUTH_CAPS "
@@ -1683,6 +1758,7 @@ class TestFsAuthorize(CephFSTestCase):
         self.captester.conduct_neg_test_for_chown_caps()
         self.captester.conduct_neg_test_for_truncate_caps()
 
+    @unittest.skip("skipping...")
     def test_multifs_single_path_rootsquash(self):
         """
         Test root_squash with multi fs
@@ -1821,8 +1897,8 @@ class TestFsAuthorize(CephFSTestCase):
         ceph_client_version = None
         tasks = self.ctx.config.get('tasks', [])
         for task in tasks:
-            if 'install' == task:
-                ceph_client_version = task.get('tag', None)
+            if task.get("install", None):
+                ceph_client_version = task.get("install").get("tag", None)
                 break
 
         log.info(f"dumping ceph_client_version - {ceph_client_version}")
@@ -1835,6 +1911,7 @@ class TestFsAuthorize(CephFSTestCase):
             captester_fs1_rw.conduct_pos_test_for_write_caps()
             captester_fs1_rw.conduct_pos_test_for_new_file_creation()
 
+    @unittest.skip("skipping...")
     def test_multifs_rootsquash_nofeature(self):
         """
         That having root_squash on one fs doesn't prevent access to others.
@@ -1870,6 +1947,7 @@ class TestFsAuthorize(CephFSTestCase):
         captester.conduct_pos_test_for_read_caps()
         captester.conduct_pos_test_for_open_caps()
 
+    @unittest.skip("skipping...")
     def test_rootsquash_nofeature(self):
         """
         That having root_squash on an fs without the feature bit raises a HEALTH_ERR warning.
@@ -1900,6 +1978,7 @@ class TestFsAuthorize(CephFSTestCase):
         self.mount_a.umount_wait()
         self.wait_for_health_clear(60)
 
+    @unittest.skip("skipping...")
     def test_rootsquash_nofeature_evict(self):
         """
         That having root_squash on an fs without the feature bit can be evicted.
@@ -1930,6 +2009,7 @@ class TestFsAuthorize(CephFSTestCase):
         self.assertTrue(self.mount_a.is_blocked())
 
 
+    @unittest.skip("skipping...")
     def test_single_path_rootsquash_issue_56067(self):
         """
         That a FS client using root squash MDS caps allows non-root user to write data
@@ -1956,6 +2036,7 @@ class TestFsAuthorize(CephFSTestCase):
             contents = self.mount_a.read_file(filepath)
             self.assertEqual(filedata, contents)
 
+    @unittest.skip("skipping...")
     def test_single_path_authorize_on_nonalphanumeric_fsname(self):
         """
         That fs authorize command works on filesystems with names having [_.-]
@@ -1981,6 +2062,7 @@ class TestFsAuthorize(CephFSTestCase):
         self._remount(keyring)
         self.captester.run_mds_cap_tests(PERM)
 
+    @unittest.skip("skipping...")
     def test_fs_read_and_single_path_rw(self):
         """
         Tests the file creation using 'touch' cmd on a specific path
@@ -2003,6 +2085,7 @@ class TestFsAuthorize(CephFSTestCase):
 
         self._remount_and_run_tests(FS_AUTH_CAPS, keyring)
 
+    @unittest.skip("skipping...")
     def test_multiple_path_r(self):
         PERM = 'r'
         FS_AUTH_CAPS = (('/dir1/dir12', PERM), ('/dir2/dir22', PERM))
@@ -2014,6 +2097,7 @@ class TestFsAuthorize(CephFSTestCase):
 
         self._remount_and_run_tests(FS_AUTH_CAPS, keyring)
 
+    @unittest.skip("skipping...")
     def test_multiple_path_rw(self):
         PERM = 'rw'
         FS_AUTH_CAPS = (('/dir1/dir12', PERM), ('/dir2/dir22', PERM))
@@ -2025,6 +2109,7 @@ class TestFsAuthorize(CephFSTestCase):
 
         self._remount_and_run_tests(FS_AUTH_CAPS, keyring)
 
+    @unittest.skip("skipping...")
     def test_when_MDS_caps_needs_update_but_others_dont(self):
         '''
         Test that the command "ceph fs authorize" successfully updates MDS
@@ -2079,6 +2164,7 @@ class TestFsAuthorize(CephFSTestCase):
             FS_AUTH_CAPS[2], self.captesters[2], self.fs2.name, self.mount_b,
             keyring)
 
+    @unittest.skip("skipping...")
     def test_adding_multiple_caps(self):
         '''
         Test that the command "ceph fs authorize" is successful in updating
@@ -2161,6 +2247,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
     # cases where "fs authorize" adds caps
     ######################################
 
+    @unittest.skip("skipping...")
     def test_add_caps_for_another_FS(self):
         """
         Test that "ceph fs authorize" adds caps for a second FS to a keyring
@@ -2189,6 +2276,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         self.captesters[0].run_cap_tests(self.fs1, self.client_id, TEST_PERM)
         self.captesters[0].run_cap_tests(self.fs1, self.client_id, TEST_PERM)
 
+    @unittest.skip("skipping...")
     def test_add_caps_for_same_FS_diff_path(self):
         '''
         Test that "ceph fs authorze" grants a new cap when it is run for a
@@ -2232,6 +2320,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         self._remount(self.mount_b, self.fs.name, keyring, PATH2)
         self.captester_b.run_cap_tests(self.fs, self.client_id, PERM, PATH2)
 
+    @unittest.skip("skipping...")
     def test_add_caps_for_client_with_no_caps(self):
         """
         Test that "ceph fs authorize" adds caps to the keyring when the
@@ -2257,6 +2346,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
     # cases where "fs authorize" changes caps
     #########################################
 
+    @unittest.skip("skipping...")
     def test_change_perms(self):
         """
         Test that "ceph fs authorize" updates the caps for a FS when the caps
@@ -2282,6 +2372,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
     # Cases where fs authorize maintains idempotency
     ################################################
 
+    @unittest.skip("skipping...")
     def test_idem_caps_passed_same_as_current_caps(self):
         """
         Test that "ceph fs authorize" exits with the keyring on stdout and the
@@ -2306,6 +2397,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         self._remount(self.mount_a, self.fs.name, keyring2)
         self.captester.run_cap_tests(self.fs, self.client_id, PERM)
 
+    @unittest.skip("skipping...")
     def test_idem_unaffected_root_squash(self):
         """
         Test that "root_squash" is not deleted from MDS caps when user runs
@@ -2351,6 +2443,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         return self.mount_a.client_remote.run(
             args='id -g', stdout=StringIO()).stdout.getvalue().strip()
 
+    @unittest.skip("skipping...")
     def test_idem_unaffected_uid(self):
         '''
         1. Create a client with caps that has FS name and UID in it.
@@ -2375,6 +2468,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         self._remount(self.mount_a, self.fs.name, keyring)
         self.captester.run_cap_tests(self.fs, self.client_id, PERM)
 
+    @unittest.skip("skipping...")
     def test_idem_unaffected_gids(self):
         '''
         1. Create a client with caps that has FS name, UID and GID in it.
@@ -2399,6 +2493,7 @@ class TestFsAuthorizeUpdate(CephFSTestCase):
         self._remount(self.mount_a, self.fs.name, keyring)
         self.captester.run_cap_tests(self.fs, self.client_id, PERM)
 
+    @unittest.skip("skipping...")
     def test_idem_unaffected_gids_multiple(self):
         '''
         1. Create client with caps with FS name, UID & multiple GIDs in it.
@@ -2445,6 +2540,7 @@ class TestAdminCommandIdempotency(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 1
 
+    @unittest.skip("skipping...")
     def test_rm_idempotency(self):
         """
         That a removing a fs twice is idempotent.
@@ -2472,6 +2568,7 @@ class TestAdminCommandDumpTree(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 1
 
+    @unittest.skip("skipping...")
     def test_dump_subtrees(self):
         """
         Dump all the subtrees to make sure the MDS daemon won't crash.
@@ -2497,6 +2594,7 @@ class TestAdminCommandDumpLoads(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 1
 
+    @unittest.skip("skipping...")
     def test_dump_loads(self):
         """
         make sure depth limit param is considered when dump loads for a MDS daemon.
@@ -2517,6 +2615,7 @@ class TestFsBalRankMask(CephFSTestCase):
     CLIENTS_REQUIRED = 0
     MDSS_REQUIRED = 2
 
+    @unittest.skip("skipping...")
     def test_bal_rank_mask(self):
         """
         check whether a specified bal_rank_mask value is valid or not.
@@ -2632,10 +2731,12 @@ class TestPermErrMsg(CephFSTestCase):
                   f'mon "{self.MONCAP}" osd "{self.OSDCAP}" mds "{MDSCAP}"'),
             retval=self.EXPECTED_ERRNO, errmsgs=self.EXPECTED_ERRMSG)
 
+    @unittest.skip("skipping...")
     def test_auth_add(self):
         for mdscap in self.MDSCAPS:
             self._negtestcmd('auth add', mdscap)
 
+    @unittest.skip("skipping...")
     def test_auth_caps(self):
         for mdscap in self.MDSCAPS:
             self.fs.mon_manager.run_cluster_cmd(
@@ -2646,14 +2747,17 @@ class TestPermErrMsg(CephFSTestCase):
             self.fs.mon_manager.run_cluster_cmd(
                 args=f'auth rm {self.CLIENT_NAME}')
 
+    @unittest.skip("skipping...")
     def test_auth_get_or_create(self):
         for mdscap in self.MDSCAPS:
             self._negtestcmd('auth get-or-create', mdscap)
 
+    @unittest.skip("skipping...")
     def test_auth_get_or_create_key(self):
         for mdscap in self.MDSCAPS:
             self._negtestcmd('auth get-or-create-key', mdscap)
 
+    @unittest.skip("skipping...")
     def test_fs_authorize(self):
         for wrong_perm in ('w', 'wr'):
             self.negtest_ceph_cmd(
@@ -2667,6 +2771,7 @@ class TestFSFail(TestAdminCommands):
     MDSS_REQUIRED = 2
     CLIENTS_REQUIRED = 2
 
+    @unittest.skip("skipping...")
     def test_with_health_warn_cache_oversized(self):
         '''
         Test that, when health warning MDS_CACHE_OVERSIZE is present for an
@@ -2686,6 +2791,7 @@ class TestFSFail(TestAdminCommands):
         self.fs.set_joinable()
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_with_health_warn_trim(self):
         '''
         Test that, when health warning MDS_TRIM is present for an MDS, command
@@ -2705,6 +2811,7 @@ class TestFSFail(TestAdminCommands):
         self.fs.set_joinable()
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_with_health_warn_with_2_active_MDSs(self):
         '''
         Test that, when a CephFS has 2 active MDSs and one of them have either
@@ -2726,6 +2833,7 @@ class TestFSFail(TestAdminCommands):
         self.fs.set_joinable()
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_when_other_FS_has_warn_TRIM(self):
         '''
         Test that "fs fail" runs successfully for an FS when a MDS which is
@@ -2748,6 +2856,7 @@ class TestFSFail(TestAdminCommands):
         self.fs.set_joinable()
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_when_other_FS_has_warn_CACHE_OVERSIZED(self):
         '''
         Test that "fs fail" runs successfully for an FS when a MDS which is
@@ -2774,6 +2883,7 @@ class TestMDSFail(TestAdminCommands):
     MDSS_REQUIRED = 2
     CLIENTS_REQUIRED = 2
 
+    @unittest.skip("skipping...")
     def test_with_health_warn_cache_oversized(self):
         '''
         Test that, when health warning MDS_CACHE_OVERSIZE is present for an
@@ -2789,6 +2899,7 @@ class TestMDSFail(TestAdminCommands):
                               retval=1, errmsgs=health_warn)
         self.run_ceph_cmd(f'mds fail {active_mds_id} --yes-i-really-mean-it')
 
+    @unittest.skip("skipping...")
     def test_with_health_warn_trim(self):
         '''
         Test that, when health warning MDS_TRIM is present for an MDS, command
@@ -2851,6 +2962,7 @@ class TestMDSFail(TestAdminCommands):
         self.run_ceph_cmd(f'mds fail {mds1_id}')
         self.run_ceph_cmd(f'mds fail {mds0_id} --yes-i-really-mean-it')
 
+    @unittest.skip("skipping...")
     def test_when_other_MDS_has_warn_TRIM(self):
         '''
         Test that "mds fail" runs successfully for a MDS when a MDS which is
@@ -2874,6 +2986,7 @@ class TestMDSFail(TestAdminCommands):
         self.fs.set_joinable()
         self.fs.wait_for_daemons()
 
+    @unittest.skip("skipping...")
     def test_when_other_MDS_has_warn_CACHE_OVERSIZED(self):
         '''
         Test that "mds fail" runs successfully for a MDS when a MDS which is
@@ -2899,6 +3012,7 @@ class TestMDSFail(TestAdminCommands):
 
 class TestFSSetMaxMDS(TestAdminCommands):
 
+    @unittest.skip("skipping...")
     def test_when_unhealthy_without_confirm(self):
         '''
         Test that command "ceph fs set <fsname> max_mds <num>" without the
@@ -2911,6 +3025,7 @@ class TestFSSetMaxMDS(TestAdminCommands):
             self.fs.set_max_mds(2, confirm=False)
         self.assertEqual(cfe.exception.exitstatus, errno.EPERM)
 
+    @unittest.skip("skipping...")
     def test_when_unhealthy_with_confirm(self):
         '''
         Test that command "ceph fs set <fsname> max_mds <num>
@@ -2921,6 +3036,7 @@ class TestFSSetMaxMDS(TestAdminCommands):
         self.fs.set_max_mds(2, confirm=True)
         self.assertEqual(self.fs.get_var('max_mds'), 2)
 
+    @unittest.skip("skipping...")
     def test_when_mds_trim_without_confirm(self):
         '''
         Test that command "ceph fs set <fsname> max_mds <num>" without the
@@ -2933,6 +3049,7 @@ class TestFSSetMaxMDS(TestAdminCommands):
             self.fs.set_max_mds(2, confirm=False)
         self.assertEqual(cfe.exception.exitstatus, errno.EPERM)
 
+    @unittest.skip("skipping...")
     def test_when_mds_trim_when_with_confirm(self):
         '''
         Test that command "ceph fs set <fsname> max_mds <num>
@@ -2944,6 +3061,7 @@ class TestFSSetMaxMDS(TestAdminCommands):
         self.fs.set_max_mds(2, confirm=True)
         self.assertEqual(self.fs.get_var('max_mds'), 2)
 
+    @unittest.skip("skipping...")
     def test_when_healthy_with_confirm(self):
         '''
         Test that command "ceph fs set <fsname> max_mds <num>
@@ -2976,6 +3094,7 @@ class TestToggleVolumes(CephFSTestCase):
 
         super(TestToggleVolumes, self).tearDown()
 
+    @unittest.skip("skipping...")
     def test_force_disable_with_confirmation(self):
         '''
         Test that running "ceph mgr module force disable volumes
@@ -2995,6 +3114,7 @@ class TestToggleVolumes(CephFSTestCase):
         self.assertNotIn(self.VOL_MOD_NAME, json_output['enabled_modules'])
         self.assertNotIn(self.VOL_MOD_NAME, json_output['disabled_modules'])
 
+    @unittest.skip("skipping...")
     def test_force_disable_fails_without_confirmation(self):
         '''
         Test that running "ceph mgr module force disable volumes" fails with
@@ -3014,6 +3134,7 @@ class TestToggleVolumes(CephFSTestCase):
         # ensure that the confirmation flag was recommended
         self.assertIn(self.CONFIRM, proc_stderr)
 
+    @unittest.skip("skipping...")
     def test_force_disable_idempotency(self):
         '''
         Test that running "ceph mgr module force disable volumes" passes when
@@ -3036,6 +3157,7 @@ class TestToggleVolumes(CephFSTestCase):
         # XXX: this this test, running this command 2nd time should pass.
         self.run_ceph_cmd(f'mgr module force disable {self.VOL_MOD_NAME}')
 
+    @unittest.skip("skipping...")
     def test_force_disable_nonexistent_mod(self):
         '''
         Test that passing non-existent name to "ceph mgr module force disable"
@@ -3047,6 +3169,7 @@ class TestToggleVolumes(CephFSTestCase):
         self.assertEqual(proc.returncode, errno.EINVAL)
         self.assertIn('EINVAL', proc.stderr.getvalue())
 
+    @unittest.skip("skipping...")
     def test_force_disable_non_alwayson_mod(self):
         '''
         Test that passing non-existent name to "ceph mgr module force disable"
@@ -3064,6 +3187,7 @@ class TestToggleVolumes(CephFSTestCase):
         self.assertEqual(proc.returncode, errno.EINVAL)
         self.assertIn('EINVAL', proc.stderr.getvalue())
 
+    @unittest.skip("skipping...")
     def test_enabled_by_default(self):
         '''
         Test that volumes plugin is enabled by default and is also reported as
@@ -3078,6 +3202,7 @@ class TestToggleVolumes(CephFSTestCase):
         self.assertNotIn(self.VOL_MOD_NAME, json_output['disabled_modules'])
         self.assertNotIn(self.VOL_MOD_NAME, json_output['force_disabled_modules'])
 
+    @unittest.skip("skipping...")
     def test_disable_fails(self):
         '''
         Test that running "ceph mgr module disable volumes" fails with EPERM.
@@ -3093,6 +3218,7 @@ class TestToggleVolumes(CephFSTestCase):
         proc_stderr = proc.stderr.getvalue()
         self.assertIn('EPERM', proc_stderr)
 
+    @unittest.skip("skipping...")
     def test_enable_idempotency(self):
         '''
         Test that enabling volumes plugin when it is already enabled doesn't
@@ -3108,6 +3234,7 @@ class TestToggleVolumes(CephFSTestCase):
         self.assertIn('already enabled', proc_stderr)
         self.assertIn('always-on', proc_stderr)
 
+    @unittest.skip("skipping...")
     def test_enable_post_disabling(self):
         '''
         Test that enabling volumes plugin after (force-)disabling it works

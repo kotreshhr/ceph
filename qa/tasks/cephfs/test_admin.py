@@ -1825,15 +1825,15 @@ class TestFsAuthorize(CephFSTestCase):
                 ceph_client_version = task.get('tag', None)
                 break
 
+        log.info(f"dumping ceph_client_version - {ceph_client_version}")
         captester_fs1_rw.conduct_pos_test_for_read_caps()
         # The multifs auth caps bug has a fix both in client and mds
-        # If it's old client and not patched, we expect that the fs
-        # with 'rw' would end up having 'r' caps with the multifs
+        # If it's old client (19.2.2) and not patched, we expect that the fs
+        # with 'rw' would end up having 'r' caps with the multifs for
         # auth caps used as in this test above.
-        if ceph_client_version == "v19.2.2":
+        if ceph_client_version != "v19.2.2":
             captester_fs1_rw.conduct_pos_test_for_write_caps()
             captester_fs1_rw.conduct_pos_test_for_new_file_creation()
-
 
     def test_multifs_rootsquash_nofeature(self):
         """

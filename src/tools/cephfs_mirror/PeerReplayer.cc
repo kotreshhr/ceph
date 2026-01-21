@@ -1303,18 +1303,19 @@ int PeerReplayer::sync_perms(const std::string& path) {
   return 0;
 }
 
-PeerReplayer::SyncMechanism::SyncMechanism(std::string_view dir_root,
+PeerReplayer::SyncMechanism::SyncMechanism(PeerReplayer& peer_replayer, std::string_view dir_root,
                                            MountRef local, MountRef remote, FHandles *fh,
                                            const Peer &peer, const Snapshot &current,
                                            boost::optional<Snapshot> prev)
-    : m_local(local),
+    : m_peer_replayer(peer_replayer),
+      m_dir_root(dir_root),
+      m_local(local),
       m_remote(remote),
       m_fh(fh),
       m_peer(peer),
       m_current(current),
       m_prev(prev),
-      sdq_lock(ceph::make_mutex("cephfs::mirror::PeerReplayer::SyncMechanism" + stringify(peer.uuid))),
-      m_dir_root(dir_root) {
+      sdq_lock(ceph::make_mutex("cephfs::mirror::PeerReplayer::SyncMechanism" + stringify(peer.uuid))) {
   }
 
 PeerReplayer::SyncMechanism::~SyncMechanism() {
@@ -1323,6 +1324,7 @@ PeerReplayer::SyncMechanism::~SyncMechanism() {
 void PeerReplayer::SyncMechanism::push_dataq_entry(SyncEntry e) {
   dout(10) << ": snapshot data replayer dataq pushed" << " syncm=" << this
 	   << " epath=" << e.epath << dendl;
+  m_peer_replayer.inc_total_bytes(std::string(m_dir_root), e.stx.stx_size);
   std::unique_lock lock(sdq_lock);
   m_sync_dataq.push(std::move(e));
   sdq_cv.notify_all();
@@ -1415,10 +1417,11 @@ int PeerReplayer::SyncMechanism::get_changed_blocks(const std::string &epath,
   return callback(block.num_blocks, block.b);
 }
 
-PeerReplayer::SnapDiffSync::SnapDiffSync(std::string_view dir_root, MountRef local, MountRef remote,
-                                         FHandles *fh, const Peer &peer, const Snapshot &current,
+PeerReplayer::SnapDiffSync::SnapDiffSync(PeerReplayer& peer_replayer, std::string_view dir_root,
+                                         MountRef local, MountRef remote, FHandles *fh,
+                                         const Peer &peer, const Snapshot &current,
                                          boost::optional<Snapshot> prev)
-  : SyncMechanism(dir_root, local, remote, fh, peer, current, prev) {
+  : SyncMechanism(peer_replayer, dir_root, local, remote, fh, peer, current, prev) {
 }
 
 PeerReplayer::SnapDiffSync::~SnapDiffSync() {
@@ -1725,11 +1728,11 @@ void PeerReplayer::SnapDiffSync::finish_sync(int ret) {
   mark_crawl_finished(ret);
 }
 
-PeerReplayer::RemoteSync::RemoteSync(std::string_view dir_root,
+PeerReplayer::RemoteSync::RemoteSync(PeerReplayer& peer_replayer, std::string_view dir_root,
                                        MountRef local, MountRef remote, FHandles *fh,
                                        const Peer &peer, const Snapshot &current,
                                        boost::optional<Snapshot> prev)
-  : SyncMechanism(dir_root, local, remote, fh, peer, current, prev) {
+  : SyncMechanism(peer_replayer, dir_root, local, remote, fh, peer, current, prev) {
 }
 
 PeerReplayer::RemoteSync::~RemoteSync() {
@@ -1903,11 +1906,11 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
 
   std::shared_ptr<SyncMechanism> syncm;
   if (fh.p_mnt == m_local_mount) {
-    syncm = std::make_shared<SnapDiffSync>(dir_root, m_local_mount, m_remote_mount,
+    syncm = std::make_shared<SnapDiffSync>(*this, dir_root, m_local_mount, m_remote_mount,
 			                   &fh, m_peer, current, prev);
 
   } else {
-    syncm = std::make_shared<RemoteSync>(dir_root, m_local_mount, m_remote_mount,
+    syncm = std::make_shared<RemoteSync>(*this, dir_root, m_local_mount, m_remote_mount,
                                          &fh, m_peer, current, boost::none);
   }
 
@@ -2392,7 +2395,30 @@ void PeerReplayer::peer_status(Formatter *f) {
       f->open_object_section("current_syncing_snap");
       f->dump_unsigned("id", (*sync_stat.current_syncing_snap).first);
       f->dump_string("name", (*sync_stat.current_syncing_snap).second);
-      f->close_section();
+      /*
+      if (sync_stat.total_bytes > 0) {
+        const uint64_t synced = sync_stat.sync_bytes;
+        const uint64_t total  = sync_stat.total_bytes;
+        const double percent = (static_cast<double>(synced) * 100.0) / total;
+
+        std::ostringstream os;
+        os << synced << "/" << total << " "
+           << std::fixed << std::setprecision(1)
+           << percent << "%";
+        f->dump_string("bytes", os.str());
+      }*/
+      f->open_object_section("bytes");
+      f->dump_unsigned("sync_bytes", sync_stat.sync_bytes);
+      f->dump_unsigned("total_bytes", sync_stat.total_bytes);
+      if (sync_stat.total_bytes > 0) {
+        double sync_pct = (static_cast<double>(sync_stat.sync_bytes) * 100.0) / sync_stat.total_bytes;
+        std::ostringstream os;
+        os << std::fixed << std::setprecision(2) << sync_pct << "%";
+        f->dump_string("sync_percent", os.str());
+      }
+
+      f->close_section(); //bytes
+      f->close_section(); //current_syncing_snap
     }
     if (sync_stat.last_synced_snap) {
       f->open_object_section("last_synced_snap");

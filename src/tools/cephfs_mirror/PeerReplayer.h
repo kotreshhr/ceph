@@ -186,10 +186,10 @@ private:
 
   class SyncMechanism {
   public:
-    SyncMechanism(std::string_view dir_root,
-                  MountRef local, MountRef remote, FHandles *fh,
-                  const Peer &peer, /* keep dout happy */
-                  const Snapshot &current, boost::optional<Snapshot> prev);
+    explicit SyncMechanism(PeerReplayer& peer_replayer, std::string_view dir_root,
+                            MountRef local, MountRef remote, FHandles *fh,
+                            const Peer &peer, /* keep dout happy */
+                            const Snapshot &current, boost::optional<Snapshot> prev);
     virtual ~SyncMechanism() = 0;
 
     virtual int init_sync() = 0;
@@ -265,6 +265,9 @@ private:
 
     int remote_mkdir(const std::string &epath, const struct ceph_statx &stx);
   protected:
+    PeerReplayer& m_peer_replayer;
+    // It's not used in RemoteSync but required to be accessed in datasync threads
+    std::string m_dir_root;
     MountRef m_local;
     MountRef m_remote;
     FHandles *m_fh;
@@ -282,13 +285,11 @@ private:
     bool m_take_snapshot = false;
     bool m_datasync_error = false;
     int m_datasync_errno = 0;
-    // It's not used in RemoteSync but required to be accessed in datasync threads
-    std::string m_dir_root;
   };
 
   class RemoteSync : public SyncMechanism {
   public:
-    RemoteSync(std::string_view dir_root,
+    RemoteSync(PeerReplayer& peer_replayer, std::string_view dir_root,
                MountRef local, MountRef remote, FHandles *fh,
                const Peer &peer, /* keep dout happy */
                const Snapshot &current, boost::optional<Snapshot> prev);
@@ -305,8 +306,8 @@ private:
 
   class SnapDiffSync : public SyncMechanism {
   public:
-    SnapDiffSync(std::string_view dir_root, MountRef local, MountRef remote,
-                 FHandles *fh, const Peer &peer, const Snapshot &current,
+    SnapDiffSync(PeerReplayer& peer_replayer, std::string_view dir_root, MountRef local,
+		 MountRef remote, FHandles *fh, const Peer &peer, const Snapshot &current,
                  boost::optional<Snapshot> prev);
     ~SnapDiffSync();
 
@@ -351,6 +352,7 @@ private:
     boost::optional<double> last_sync_duration;
     boost::optional<uint64_t> last_sync_bytes; //last sync bytes for display in status
     uint64_t sync_bytes = 0; //sync bytes counter, independently for each directory sync.
+    uint64_t total_bytes = 0; //total bytes counter, independently for each directory sync.
   };
 
   void _inc_failed_count(const std::string &dir_root) {
@@ -392,6 +394,7 @@ private:
     _set_last_synced_snap(dir_root, snap_id, snap_name);
     auto &sync_stat = m_snap_sync_stats.at(dir_root);
     sync_stat.sync_bytes = 0;
+    sync_stat.total_bytes = 0;
   }
   void set_current_syncing_snap(const std::string &dir_root, uint64_t snap_id,
                                 const std::string &snap_name) {
@@ -428,6 +431,11 @@ private:
     std::scoped_lock locker(m_lock);
     auto &sync_stat = m_snap_sync_stats.at(dir_root);
     sync_stat.sync_bytes += b;
+  }
+  void inc_total_bytes(const std::string &dir_root, const uint64_t& b) {
+    std::scoped_lock locker(m_lock);
+    auto &sync_stat = m_snap_sync_stats.at(dir_root);
+    sync_stat.total_bytes += b;
   }
   bool should_backoff(const std::string &dir_root, int *retval) {
     if (m_fs_mirror->is_blocklisted()) {

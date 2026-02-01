@@ -359,6 +359,7 @@ private:
     uint64_t files_started = 0; //files picked up for sync counter, independently for each directory sync.
     uint64_t total_files = 0; //total files counter, independently for each directory sync.
     bool snapdiff = false; // RemoteSync or Snapdiff
+    bool crawl_finished = false; // crawl_state - in-progress/completed
     // actual io accounting
     uint64_t bytes_read = 0; //actual bytes read counter, independently for each directory sync.
     uint64_t bytes_written = 0; //actual bytes written counter, independently for each directory sync.
@@ -418,6 +419,7 @@ private:
     sync_stat.files_started = 0;
     sync_stat.bd_sync_bytes = 0;
     sync_stat.blockdiff_time_sec = 0;
+    sync_stat.crawl_finished = false;
   }
   void set_current_syncing_snap(const std::string &dir_root, uint64_t snap_id,
                                 const std::string &snap_name) {
@@ -455,6 +457,11 @@ private:
     std::scoped_lock locker(m_lock);
     auto &sync_stat = m_snap_sync_stats.at(dir_root);
     sync_stat.snapdiff = snapdiff;
+  }
+  void set_crawl_finished(const std::string &dir_root, bool state) {
+    std::scoped_lock locker(m_lock);
+    auto &sync_stat = m_snap_sync_stats.at(dir_root);
+    sync_stat.crawl_finished = state;
   }
   void set_blockdiff_bw(const std::string &dir_root, const uint64_t bd_syncbytes, const double bd_time) {
     std::scoped_lock locker(m_lock);

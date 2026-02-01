@@ -1403,11 +1403,14 @@ bool PeerReplayer::SyncMechanism::has_pending_work() const {
 }
 
 void PeerReplayer::SyncMechanism::mark_crawl_finished(int ret) {
-  std::unique_lock lock(sdq_lock);
-  m_sync_crawl_finished = true;
-  if (ret < 0)
-    m_sync_crawl_error = true;
-  sdq_cv.notify_all();
+  {
+    std::unique_lock lock(sdq_lock);
+    m_sync_crawl_finished = true;
+    if (ret < 0)
+      m_sync_crawl_error = true;
+    sdq_cv.notify_all();
+  }
+  m_peer_replayer.set_crawl_finished(m_dir_root, true);
 }
 
 // Returns false if there is any error during data sync
@@ -2532,6 +2535,10 @@ void PeerReplayer::peer_status(Formatter *f) {
         f->dump_string("sync-mode", "delta");
       else
         f->dump_string("sync-mode", "full");
+      if (sync_stat.crawl_finished)
+        f->dump_string("crawl-state", "completed");
+      else
+        f->dump_string("crawl-state", "in-progress");
       f->open_object_section("current_syncing_snap");
       f->dump_unsigned("id", (*sync_stat.current_syncing_snap).first);
       f->dump_string("name", (*sync_stat.current_syncing_snap).second);

@@ -25,6 +25,13 @@
   estimates. This feature is enabled by default for relevant commands including
   scan_extents, scan_inodes, and other state-changing operations.
   Related Tracker: https://tracker.ceph.com/issues/63191
+* CephFS: CephFS mirroring now utilizes a multi-threaded architecture to improve synchronization
+  performance. The workload is split into two distinct thread pools: a crawler thread pool, which
+  manages snapshot crawl and a data synchronization thread pool, which handles concurrent file
+  transfers. Users can fine-tune these operations using configuration parameters:
+  cephfs_mirror_max_concurrent_directory_syncs (controlling the number of concurrent snapshots being crawled)
+  and cephfs_mirror_max_concurrent_data_sync_threads (controlling the total threads available for data sync).
+  For more information, see https://tracker.ceph.com/issues/73452
 
 >=20.0.0
 

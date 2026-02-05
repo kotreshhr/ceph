@@ -1694,8 +1694,9 @@ int PeerReplayer::SnapDiffSync::get_changed_blocks(const std::string &epath,
   using seconds = std::chrono::duration<double>;
   seconds blockdiff_time{0};
   uint64_t bd_synced_bytes = 0;
+  static constexpr uint64_t MIN_BYTES_BLOCKDIFF = 1ULL * 16 * 1024 * 1024; // 16MiB
 
-  if (!sync_check) {
+  if (!sync_check || stx.stx_size <= MIN_BYTES_BLOCKDIFF) {
     auto bd_s = clock::now();
     int r = SyncMechanism::get_changed_blocks(epath, stx, sync_check, callback);
     auto bd_e = clock::now();

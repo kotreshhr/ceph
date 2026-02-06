@@ -76,7 +76,7 @@ private:
   };
 
   bool is_stopping() {
-    return m_stopping;
+    return m_stopping.load(std::memory_order_acquire);
   }
 
   struct Replayer;
@@ -261,7 +261,7 @@ private:
     void sdq_cv_notify_all_unlocked() {
       sdq_cv.notify_all();
     }
-    bool wait_until_safe_to_snapshot();
+    bool wait_until_safe_to_snapshot(int *s_b_err);
 
     int remote_mkdir(const std::string &epath, const struct ceph_statx &stx);
   protected:
@@ -552,7 +552,7 @@ private:
   ceph::condition_variable m_cond;
   RadosRef m_remote_cluster;
   MountRef m_remote_mount;
-  bool m_stopping = false;
+  std::atomic<bool> m_stopping{false};
   SnapshotReplayers m_replayers;
 
   SnapshotDataReplayers m_data_replayers;

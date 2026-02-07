@@ -1371,6 +1371,7 @@ void PeerReplayer::SyncMechanism::push_dataq_entry(SyncEntry e) {
 }
 
 bool PeerReplayer::SyncMechanism::pop_dataq_entry(SyncEntry &out_entry) {
+  std::unique_lock smq_lock(m_peer_replayer.get_smq_lock());
   std::unique_lock lock(sdq_lock);
   dout(20) << ": snapshot data replayer waiting on m_sync_dataq, syncm=" << this << dendl;
   while (true) {
@@ -1382,8 +1383,12 @@ bool PeerReplayer::SyncMechanism::pop_dataq_entry(SyncEntry &out_entry) {
     // check for shutdown/blocklist every 3s
     int r = 0;
     if (m_peer_replayer.should_backoff(m_dir_root, &r)) {
-      dout(0) << ": backing off, shutdown/blocklist  r=" << r << dendl;
-      set_datasync_error(r);
+      dout(0) << ": backing off, shutdown/blocklist/cancel  r=" << r << dendl;
+      if (r == -ECANCELED) {
+        set_datasync_error_unlocked(r);
+      } else { //shutdown/blocklist
+        m_peer_replayer.mark_all_syncms_to_backoff(r);
+      }
       return false;
     }
   }
@@ -1443,22 +1448,13 @@ void PeerReplayer::SyncMechanism::mark_crawl_finished(int ret) {
 }
 
 // Returns false if there is any error during data sync or shutdown or blocklist happened
-bool PeerReplayer::SyncMechanism::wait_until_safe_to_snapshot(int *s_b_err) {
+bool PeerReplayer::SyncMechanism::wait_until_safe_to_snapshot() {
   std::unique_lock lock(sdq_lock);
   dout(20) << ": Waiting for data sync to be done to take snapshot - dir_root=" << m_dir_root
            << " current=" << m_current << " prev=" << (m_prev ? stringify(m_prev) : "")
 	   << " syncm=" << this << dendl;
-  while (true) {
-    bool ready = sdq_cv.wait_for(lock, 3s, [this]{return m_take_snapshot || m_datasync_error;});
-    // predicate true
-    if (ready)
-      break;
-    // check for shutdown/blocklist every 3s
-    if (m_peer_replayer.should_backoff(m_dir_root, s_b_err)) {
-      dout(0) << ": backing off, shutdown/blocklist  r=" << *s_b_err << dendl;
-      return false;
-    }
-  }
+
+  sdq_cv.wait(lock, [this]{return m_take_snapshot || m_datasync_error;});
   dout(20) << ": Woke up to take snapshot - dir_root=" << m_dir_root
            << " current=" << m_current << " prev=" << (m_prev ? stringify(m_prev) : "")
 	   << " syncm=" << this << dendl;
@@ -2066,11 +2062,8 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
   ceph_close(fh.p_mnt, fh.p_fd);
 
   // Wait for datasync threads to finish the job
-  int shutdown_blocklist_err = 0;
-  bool datasync_err = syncm->wait_until_safe_to_snapshot(&shutdown_blocklist_err);
+  bool datasync_err = syncm->wait_until_safe_to_snapshot();
 
-  if (shutdown_blocklist_err < 0)
-    return shutdown_blocklist_err;
   if (r == 0 && !datasync_err) {
     // All good, take the snapshot
     auto cur_snap_id_str{stringify(current.second)};
@@ -2355,6 +2348,37 @@ std::shared_ptr<PeerReplayer::SyncMechanism> PeerReplayer::pick_next_syncm() con
   return nullptr;
 }
 
+void PeerReplayer::mark_and_notify_syncms_to_backoff(int err) {
+  // caller holds the smq_lock
+  for (auto& syncm : syncm_q) {
+    std::unique_lock sdq_l1(syncm->get_sdq_lock());
+    syncm->set_datasync_error_unlocked(err);
+    syncm->mark_backoff_unlocked();
+    if (get_active_datasync_threads() == 1) { //Last thread
+      syncm->sdq_cv_notify_all_unlocked(); // To wake up crawler thread
+    }
+  }
+  smq_cv.notify_all(); // To wake up other datasync threads to speed up exit
+}
+
+void PeerReplayer::mark_all_syncms_to_backoff(int err) {
+  // caller holds the smq_lock and sdq_lock
+  for (auto& syncm : syncm_q) {
+    syncm->set_datasync_error_unlocked(err);
+    syncm->mark_backoff_unlocked();
+  }
+}
+
+void PeerReplayer::notify_all_syncms_to_backoff() {
+  // caller holds the smq_lock and sdq_lock
+  if (get_active_datasync_threads() == 1) { //Last thread
+    for (auto& syncm : syncm_q) {
+      syncm->sdq_cv_notify_all_unlocked(); // To wake up crawler thread
+    }
+  }
+  smq_cv.notify_all(); // To wake up other datasync threads to speed up exit
+}
+
 void PeerReplayer::run_datasync(SnapshotDataSyncThread *data_replayer) {
   dout(10) << ": snapshot datasync replayer=" << data_replayer << dendl;
 
@@ -2363,7 +2387,8 @@ void PeerReplayer::run_datasync(SnapshotDataSyncThread *data_replayer) {
    * using m_lock
    */
   while (true) {
-    bool shutdown_or_blocklist = false;
+    bool shutdown = false;
+    bool blocklist = false;
     std::shared_ptr<SyncMechanism> syncm;
     {
       std::unique_lock lock(smq_lock);
@@ -2372,15 +2397,24 @@ void PeerReplayer::run_datasync(SnapshotDataSyncThread *data_replayer) {
         bool ready  = smq_cv.wait_for(lock, 3s, [this] { return !syncm_q.empty() && pick_next_syncm();});
         if (ready) //predicate is true
           break;
-        if (is_stopping() || m_fs_mirror->is_blocklisted()) { // check for shutdown/blocklist every 3s
+        if (is_stopping()) { // check for blocklist every 3s
           dout(5) << ": exiting snapshot data replayer=" << data_replayer
-                  << " as client is blocklisted or mirror shutdown" << dendl;
-          shutdown_or_blocklist = true;
+                  << " as mirroring is shutting down" << dendl;
+          shutdown = true;
+	  mark_and_notify_syncms_to_backoff(-EINPROGRESS);
+          break;
+        }
+        if (m_fs_mirror->is_blocklisted()) { // check for blocklist every 3s
+          dout(5) << ": exiting snapshot data replayer=" << data_replayer
+                  << " as client is blocklisted" << dendl;
+          blocklist = true;
+          mark_and_notify_syncms_to_backoff(-EBLOCKLISTED);
           break;
         }
       }
-      if (shutdown_or_blocklist)
-        break;
+      if (shutdown || blocklist) {
+        break; //exit
+      }
       // syncm is gauranteed to be non-null because of the predicate used in above wait.
       syncm = pick_next_syncm();
       dout(20) << ": snapshot data replayer woke up! syncm=" << syncm << dendl;
@@ -2450,6 +2484,14 @@ void PeerReplayer::run_datasync(SnapshotDataSyncThread *data_replayer) {
     {
       std::unique_lock smq_l1(smq_lock);
       std::unique_lock sdq_l1(syncm->get_sdq_lock());
+      // backoff ?
+      const bool syncm_backoff = syncm->get_backoff_unlocked();
+      int syncm_errno = syncm->get_datasync_errno_unlocked();
+      if (syncm_backoff && syncm_errno != -ECANCELED) {
+        notify_all_syncms_to_backoff(); //shutdown/blocklist
+        break; // exit
+      }
+
       const bool no_in_flight_syncm_jobs = syncm->get_in_flight_unlocked() == 0;
       const bool crawl_finished = syncm->get_crawl_finished_unlocked();
       const bool sync_error =

@@ -95,6 +95,24 @@ private:
     PeerReplayer *m_peer_replayer;
   };
 
+  class SnapshotDataSyncThreadGuard {
+  public:
+    explicit SnapshotDataSyncThreadGuard(PeerReplayer *peer_replayer)
+      : m_peer_replayer(peer_replayer) {
+      m_peer_replayer->m_active_datasync_threads.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    ~SnapshotDataSyncThreadGuard() {
+      m_peer_replayer->m_active_datasync_threads.fetch_sub(1, std::memory_order_relaxed);
+    }
+
+    SnapshotDataSyncThreadGuard(const SnapshotDataSyncThreadGuard&) = delete;
+    SnapshotDataSyncThreadGuard& operator=(const SnapshotDataSyncThreadGuard&) = delete;
+
+  private:
+    PeerReplayer* m_peer_replayer;
+  };
+
   class SnapshotDataSyncThread : public Thread {
   public:
     SnapshotDataSyncThread(PeerReplayer *peer_replayer)
@@ -102,6 +120,7 @@ private:
     }
 
     void *entry() override {
+      SnapshotDataSyncThreadGuard guard(m_peer_replayer); //active thread counter
       m_peer_replayer->run_datasync(this);
       return 0;
     }
@@ -222,11 +241,24 @@ private:
       m_datasync_error = true;
       m_datasync_errno = err;
     }
+    void set_datasync_error_unlocked(int err) {
+      m_datasync_error = true;
+      m_datasync_errno = err;
+    }
+    void mark_backoff_unlocked() {
+      m_backoff = true;
+    }
+    bool get_backoff_unlocked() {
+      return m_backoff;
+    }
     bool get_datasync_error_unlocked() {
       return m_datasync_error;
     }
     int get_datasync_errno() {
       std::unique_lock lock(sdq_lock);
+      return m_datasync_errno;
+    }
+    int get_datasync_errno_unlocked() {
       return m_datasync_errno;
     }
     bool get_crawl_error() {
@@ -261,7 +293,7 @@ private:
     void sdq_cv_notify_all_unlocked() {
       sdq_cv.notify_all();
     }
-    bool wait_until_safe_to_snapshot(int *s_b_err);
+    bool wait_until_safe_to_snapshot();
 
     int remote_mkdir(const std::string &epath, const struct ceph_statx &stx);
   protected:
@@ -285,6 +317,7 @@ private:
     bool m_take_snapshot = false;
     bool m_datasync_error = false;
     int m_datasync_errno = 0;
+    bool m_backoff = false;
   };
 
   class RemoteSync : public SyncMechanism {
@@ -556,6 +589,7 @@ private:
   SnapshotReplayers m_replayers;
 
   SnapshotDataReplayers m_data_replayers;
+  std::atomic<int> m_active_datasync_threads{0};
 
   ceph::mutex smq_lock;
   ceph::condition_variable smq_cv;
@@ -570,6 +604,12 @@ private:
   void remove_syncm(const std::shared_ptr<SyncMechanism>& syncm_obj);
   bool is_syncm_active(const std::shared_ptr<SyncMechanism>& syncm_obj);
   std::shared_ptr<SyncMechanism> pick_next_syncm() const;
+  int get_active_datasync_threads() const {
+    return m_active_datasync_threads.load(std::memory_order_relaxed);
+  }
+  void mark_and_notify_syncms_to_backoff(int err);
+  void mark_all_syncms_to_backoff(int err);
+  void notify_all_syncms_to_backoff();
 
   boost::optional<std::string> pick_directory();
   int register_directory(const std::string &dir_root, SnapshotReplayerThread *replayer);
@@ -617,6 +657,9 @@ private:
 
   // add syncm to syncm_q
   void enqueue_syncm(const std::shared_ptr<SyncMechanism>& item);
+  ceph::mutex& get_smq_lock() {
+    return smq_lock;
+  }
   double compute_eta(SnapSyncStat& sync_stat);
 };
 

@@ -45,18 +45,24 @@ using ceph::bufferlist;
 using ceph::Formatter;
 
 void ClusterInfo::encode(ceph::buffer::list &bl) const {
-  ENCODE_START(1, 1, bl);
+  ENCODE_START(2, 1, bl); // v2 compatible with v1
   encode(client_name, bl);
   encode(cluster_name, bl);
   encode(fs_name, bl);
+  encode(fsid, bl);        // v2
+  encode(mon_host, bl);    // v2
   ENCODE_FINISH(bl);
 }
 
 void ClusterInfo::decode(ceph::buffer::list::const_iterator &iter) {
-  DECODE_START(1, iter);
+  DECODE_START(2, iter); // Can decode versions >= v1
   decode(client_name, iter);
   decode(cluster_name, iter);
   decode(fs_name, iter);
+  if (struct_v >= 2) {
+    decode(fsid, iter);
+    decode(mon_host, iter);
+  }
   DECODE_FINISH(iter);
 }
 
@@ -64,11 +70,24 @@ void ClusterInfo::dump(ceph::Formatter *f) const {
   f->dump_string("client_name", client_name);
   f->dump_string("cluster_name", cluster_name);
   f->dump_string("fs_name", fs_name);
+  if (!fsid.empty()) {      // Only dump if set
+    f->dump_string("fsid", fsid);
+  }
+  if (!mon_host.empty()) {  // Only dump if set
+    f->dump_string("mon_host", mon_host);
+  }
 }
 
 void ClusterInfo::print(std::ostream& out) const {
   out << "[client_name=" << client_name << ", cluster_name=" << cluster_name
-      << ", fs_name=" << fs_name << "]" << std::endl;
+      << ", fs_name=" << fs_name;
+  if (!fsid.empty()) {
+    out << ", fsid=" << fsid;
+  }
+  if (!mon_host.empty()) {
+    out << ", mon_host=" << mon_host;
+  }
+  out << "]" << std::endl;
 }
 
 void Peer::encode(ceph::buffer::list &bl) const {

@@ -56,6 +56,9 @@ erase_if(std::map<Key, T, Compare, Alloc>& c, Pred pred) {
 class health_check_map_t;
 
 struct ClusterInfo {
+  // ENCODING VERSION:
+  // Version 1: client_name, cluster_name, fs_name
+  // Version 2: + mon_host, fsid
   ClusterInfo() = default;
   ClusterInfo(std::string_view client_name, std::string_view cluster_name,
               std::string_view fs_name)
@@ -63,10 +66,21 @@ struct ClusterInfo {
       cluster_name(cluster_name),
       fs_name(fs_name) {
   }
+  ClusterInfo(std::string_view client_name, std::string_view cluster_name,
+              std::string_view fs_name, std::string_view fsid,
+	      std::string_view mon_host)
+    : client_name(client_name),
+      cluster_name(cluster_name),
+      fs_name(fs_name),
+      fsid(fsid),
+      mon_host(mon_host) {
+  }
 
   std::string client_name;
   std::string cluster_name;
   std::string fs_name;
+  std::string fsid;
+  std::string mon_host;
 
   bool operator==(const ClusterInfo &cluster_info) const {
     return client_name == cluster_info.client_name &&
@@ -83,7 +97,14 @@ struct ClusterInfo {
 
 inline std::ostream& operator<<(std::ostream& out, const ClusterInfo &cluster_info) {
   out << "{client_name=" << cluster_info.client_name << ", cluster_name="
-      << cluster_info.cluster_name << ", fs_name=" << cluster_info.fs_name << "}";
+      << cluster_info.cluster_name << ", fs_name=" << cluster_info.fs_name;
+  if (!cluster_info.fsid.empty()) {
+    out << ", fsid=" << cluster_info.fsid;
+  }
+  if (!cluster_info.mon_host.empty()) {
+    out << ", mon_host=" << cluster_info.mon_host;
+  }
+  out << "}";
   return out;
 }
 

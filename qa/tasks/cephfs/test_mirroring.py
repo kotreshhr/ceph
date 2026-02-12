@@ -86,7 +86,7 @@ class TestMirroring(CephFSTestCase):
         self.assertLess(vafter["counters"]["mirrored_filesystems"],
                         vbefore["counters"]["mirrored_filesystems"])
 
-    def verify_peer_added(self, fs_name, fs_id, peer_spec, remote_fs_name=None):
+    def verify_peer_added(self, fs_name, fs_id, peer_spec, remote_fs_name=None, remote_fs_id=None, bool validate_mon_host=False):
         # verify via asok
         res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
                                          'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
@@ -99,6 +99,10 @@ class TestMirroring(CephFSTestCase):
             self.assertTrue(self.secondary_fs_name == res['peers'][peer_uuid]['remote']['fs_name'])
         else:
             self.assertTrue(self.fs_name == res['peers'][peer_uuid]['remote']['fs_name'])
+        if remote_fs_id:
+            self.assertTrue(self.secondary_fs_id == res['peers'][peer_uuid]['remote']['fsid'])
+        if validate_mon_host:
+            self.assertTrue(res['peers'][peer_uuid]['remote']['mon_host'])
 
     def peer_add(self, fs_name, fs_id, peer_spec, remote_fs_name=None, check_perf_counter=True):
         if check_perf_counter:
@@ -927,7 +931,7 @@ class TestMirroring(CephFSTestCase):
         self.import_peer(self.primary_fs_name, bootstrap_token)
         time.sleep(10)
         self.verify_peer_added(self.primary_fs_name, self.primary_fs_id, "client.mirror_peer_bootstrap@site-remote",
-                               self.secondary_fs_name)
+                               self.secondary_fs_name, self.secondary_fs_id, validate_mon_host=True)
 
         # verify via peer_list interface
         peer_uuid = self.get_peer_uuid("client.mirror_peer_bootstrap@site-remote")

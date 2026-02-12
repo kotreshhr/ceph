@@ -592,6 +592,11 @@ class FSSnapshotMirror:
                        'uuid': peer_uuid,
                        'remote_cluster_spec': remote_cluster_spec,
                        'remote_fs_name': remote_fs_name}
+                # ADD mon_host and fsid to the command if available
+                if remote_conf.get('fsid'):
+                    cmd['fsid'] = remote_conf['fsid']
+                if remote_conf.get('mon_host'):
+                    cmd['mon_host'] = remote_conf['mon_host']
                 r, outs, err = self.mgr.mon_command(cmd)
                 if r < 0:
                     log.error(f'mon command to add peer failed: {err}')

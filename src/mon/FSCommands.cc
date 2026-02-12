@@ -1789,9 +1789,14 @@ public:
     string peer_uuid;
     string remote_spec;
     string remote_fs_name;
+    string fsid;
+    string mon_host;
+
     cmd_getval(cmdmap, "uuid", peer_uuid);
     cmd_getval(cmdmap, "remote_cluster_spec", remote_spec);
     cmd_getval(cmdmap, "remote_fs_name", remote_fs_name);
+    cmd_getval(cmdmap, "fsid", fsid);
+    cmd_getval(cmdmap, "mon_host", mon_host);
 
     // verify (and extract) remote cluster specification
     auto remote_conf = extract_remote_cluster_conf(remote_spec);
@@ -1810,9 +1815,10 @@ public:
       return true;
     }
 
-    auto f = [peer_uuid, remote_conf, remote_fs_name](auto&& fs) {
+    auto f = [peer_uuid, remote_conf, remote_fs_name, fsid, mon_host](auto&& fs) {
                fs.get_mirror_info().peer_add(peer_uuid, (*remote_conf).first,
-                                        (*remote_conf).second, remote_fs_name);
+                                        (*remote_conf).second, remote_fs_name,
+                                        fsid, mon_host);
              };
     fsmap.modify_filesystem(fs.get_fscid(), std::move(f));
     return true;

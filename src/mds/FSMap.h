@@ -180,8 +180,11 @@ struct MirrorInfo {
   void peer_add(std::string_view uuid,
                 std::string_view client_name,
                 std::string_view cluster_name,
-                std::string_view fs_name) {
-    peers.emplace(Peer(uuid, ClusterInfo(client_name, cluster_name, fs_name)));
+                std::string_view fs_name,
+                std::string_view fsid = "",
+                std::string_view mon_host = ""){
+    peers.emplace(Peer(uuid, ClusterInfo(client_name, cluster_name, fs_name,
+                                         fsid, mon_host)));
   }
   void peer_remove(std::string_view uuid) {
     peers.erase(uuid);

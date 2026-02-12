@@ -86,6 +86,21 @@ class TestMirroring(CephFSTestCase):
         self.assertLess(vafter["counters"]["mirrored_filesystems"],
                         vbefore["counters"]["mirrored_filesystems"])
 
+    def verify_peer_added_from_fsmap(self, fs_name, fs_id, peer_spec, remote_fs_name, remote_fs_id):
+        status = self.fs.status()
+        fs_map = status.get_fsmap_byname(self.primary_fs_name)
+        peers = fs_map['mirror_info']['peers']
+        for peer_uuid, mirror_info in peers.items():
+            client_name = mirror_info['remote']['client_name']
+            cluster_name = mirror_info['remote']['cluster_name']
+            remote_peer_spec = f'{client_name}@{cluster_name}'
+            if peer_spec == remote_peer_spec:
+                self.assertTrue(remote_fs_name == mirror_info['remote']['fs_name'])
+                self.assertTrue(remote_fs_id == res['peers'][peer_uuid]['remote']['fsid'])
+                self.assertTrue(res['peers'][peer_uuid]['remote']['mon_host'])
+                return
+        self.fail("verify_peer_added_from_fsmap failed - remote uuid not found")
+
     def verify_peer_added(self, fs_name, fs_id, peer_spec, remote_fs_name=None, remote_fs_id=None, bool validate_mon_host=False):
         # verify via asok
         res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
@@ -933,6 +948,9 @@ class TestMirroring(CephFSTestCase):
         self.verify_peer_added(self.primary_fs_name, self.primary_fs_id, "client.mirror_peer_bootstrap@site-remote",
                                self.secondary_fs_name, self.secondary_fs_id, validate_mon_host=True)
 
+        # verify via fsmap
+        self.verify_peer_added_from_fsmap(self.primary_fs_name, self.primary_fs_id, "client.mirror_peer_bootstrap@site-remote",
+                                          self.secondary_fs_name, self.secondary_fs_id)
         # verify via peer_list interface
         peer_uuid = self.get_peer_uuid("client.mirror_peer_bootstrap@site-remote")
         res = json.loads(self.get_ceph_cmd_stdout("fs", "snapshot", "mirror", "peer_list", self.primary_fs_name))

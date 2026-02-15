@@ -1707,7 +1707,8 @@ int PeerReplayer::SnapDiffSync::get_changed_blocks(const std::string &epath,
   dout(20) << ": dir_root=" << m_dir_root << ", epath=" << epath
            << ", sync_check=" << sync_check << dendl;
 
-  if (!sync_check) {
+  static constexpr uint64_t MIN_BYTES_BLOCKDIFF = 1ULL * 16 * 1024 * 1024; // 16MiB
+  if (!sync_check || stx.stx_size <= MIN_BYTES_BLOCKDIFF) {
     return SyncMechanism::get_changed_blocks(epath, stx, sync_check, callback);
   }
 

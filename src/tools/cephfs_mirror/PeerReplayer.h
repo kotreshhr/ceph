@@ -241,6 +241,13 @@ private:
       m_datasync_error = true;
       m_datasync_errno = err;
     }
+    void set_datasync_error_unlocked(int err) {
+      m_datasync_error = true;
+      m_datasync_errno = err;
+    }
+    void mark_backoff_unlocked() {
+      m_backoff = true;
+    }
     bool get_datasync_error_unlocked() {
       return m_datasync_error;
     }
@@ -304,6 +311,7 @@ private:
     bool m_take_snapshot = false;
     bool m_datasync_error = false;
     int m_datasync_errno = 0;
+    bool m_backoff = false;
   };
 
   class RemoteSync : public SyncMechanism {
@@ -514,6 +522,7 @@ private:
   int get_active_datasync_threads() const {
     return m_active_datasync_threads.load(std::memory_order_relaxed);
   }
+  void mark_and_notify_syncms_to_backoff(int err);
 
   boost::optional<std::string> pick_directory();
   int register_directory(const std::string &dir_root, SnapshotReplayerThread *replayer);

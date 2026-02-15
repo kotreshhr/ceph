@@ -1306,18 +1306,19 @@ int PeerReplayer::sync_perms(const std::string& path) {
   return 0;
 }
 
-PeerReplayer::SyncMechanism::SyncMechanism(std::string_view dir_root,
+PeerReplayer::SyncMechanism::SyncMechanism(PeerReplayer& peer_replayer, std::string_view dir_root,
                                            MountRef local, MountRef remote, FHandles *fh,
                                            const Peer &peer, const Snapshot &current,
                                            boost::optional<Snapshot> prev)
-    : m_local(local),
+    : m_peer_replayer(peer_replayer),
+      m_dir_root(dir_root),
+      m_local(local),
       m_remote(remote),
       m_fh(fh),
       m_peer(peer),
       m_current(current),
       m_prev(prev),
-      sdq_lock(ceph::make_mutex("cephfs::mirror::PeerReplayer::SyncMechanism" + stringify(peer.uuid))),
-      m_dir_root(dir_root) {
+      sdq_lock(ceph::make_mutex("cephfs::mirror::PeerReplayer::SyncMechanism" + stringify(peer.uuid))) {
   }
 
 PeerReplayer::SyncMechanism::~SyncMechanism() {
@@ -1418,10 +1419,11 @@ int PeerReplayer::SyncMechanism::get_changed_blocks(const std::string &epath,
   return callback(block.num_blocks, block.b);
 }
 
-PeerReplayer::SnapDiffSync::SnapDiffSync(std::string_view dir_root, MountRef local, MountRef remote,
-                                         FHandles *fh, const Peer &peer, const Snapshot &current,
+PeerReplayer::SnapDiffSync::SnapDiffSync(PeerReplayer& peer_replayer, std::string_view dir_root,
+                                         MountRef local, MountRef remote, FHandles *fh,
+                                         const Peer &peer, const Snapshot &current,
                                          boost::optional<Snapshot> prev)
-  : SyncMechanism(dir_root, local, remote, fh, peer, current, prev) {
+  : SyncMechanism(peer_replayer, dir_root, local, remote, fh, peer, current, prev) {
 }
 
 PeerReplayer::SnapDiffSync::~SnapDiffSync() {
@@ -1728,11 +1730,11 @@ void PeerReplayer::SnapDiffSync::finish_sync(int ret) {
   mark_crawl_finished(ret);
 }
 
-PeerReplayer::RemoteSync::RemoteSync(std::string_view dir_root,
-                                       MountRef local, MountRef remote, FHandles *fh,
-                                       const Peer &peer, const Snapshot &current,
-                                       boost::optional<Snapshot> prev)
-  : SyncMechanism(dir_root, local, remote, fh, peer, current, prev) {
+PeerReplayer::RemoteSync::RemoteSync(PeerReplayer& peer_replayer, std::string_view dir_root,
+                                     MountRef local, MountRef remote, FHandles *fh,
+                                     const Peer &peer, const Snapshot &current,
+                                     boost::optional<Snapshot> prev)
+  : SyncMechanism(peer_replayer, dir_root, local, remote, fh, peer, current, prev) {
 }
 
 PeerReplayer::RemoteSync::~RemoteSync() {
@@ -1906,11 +1908,10 @@ int PeerReplayer::do_synchronize(const std::string &dir_root, const Snapshot &cu
 
   std::shared_ptr<SyncMechanism> syncm;
   if (fh.p_mnt == m_local_mount) {
-    syncm = std::make_shared<SnapDiffSync>(dir_root, m_local_mount, m_remote_mount,
-			                   &fh, m_peer, current, prev);
-
+    syncm = std::make_shared<SnapDiffSync>(*this, dir_root, m_local_mount, m_remote_mount,
+                                           &fh, m_peer, current, prev);
   } else {
-    syncm = std::make_shared<RemoteSync>(dir_root, m_local_mount, m_remote_mount,
+    syncm = std::make_shared<RemoteSync>(*this, dir_root, m_local_mount, m_remote_mount,
                                          &fh, m_peer, current, boost::none);
   }
 

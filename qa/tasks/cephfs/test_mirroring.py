@@ -1164,6 +1164,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_cephfs_mirror_incremental_sync(self):
         """ Test incremental snapshot synchronization (based on mtime differences)."""
+        self.skipTest("Fails - Known issue - https://tracker.ceph.com/issues/74984")
         self.setup_mount_b(mds_perm='rw')
         repo = 'ceph-qa-suite'
         repo_dir = 'ceph_repo'

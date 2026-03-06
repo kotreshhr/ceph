@@ -6,6 +6,7 @@ import logging
 import random
 import time
 import functools
+import re
 
 from io import StringIO
 from collections import deque
@@ -13,6 +14,7 @@ from collections import deque
 from tasks.cephfs.cephfs_test_case import CephFSTestCase
 from teuthology.exceptions import CommandFailedError
 from teuthology.contextutil import safe_while
+from tasks.cephadm import _shell
 
 log = logging.getLogger(__name__)
 
@@ -76,6 +78,7 @@ class TestMirroring(CephFSTestCase):
         self.secondary_fs_name = self.backup_fs.name
         self.secondary_fs_id = self.backup_fs.id
         self.enable_mirroring_module()
+        self.active_asok = None
 
     def tearDown(self):
         self.disable_mirroring_module()
@@ -377,9 +380,63 @@ class TestMirroring(CephFSTestCase):
                 return peer_uuid
         return None
 
+    import re
+
     def get_daemon_admin_socket(self):
-        """overloaded by teuthology override (fs/mirror/clients/mirror.yaml)"""
-        return "/var/run/ceph/cephfs-mirror.asok"
+        """
+        Identifies and caches the active cephfs-mirror admin socket.
+        Probes for liveness only if self.active_asok is not already set.
+        """
+        # Check if we already have a validated socket
+        if self.active_asok:
+            return self.active_asok
+
+        cmd_label = "get_mirror_asok"
+        try:
+            p = _shell(self.mount_a.ctx,
+                   'ceph',
+                   self.mount_a.client_remote,
+                   args=['ls', '/var/run/ceph'],
+                   stdout=StringIO(), stderr=StringIO(), timeout=30,
+                   check_status=True, label=cmd_label
+                )
+            p.wait()
+        except CommandFailedError as ce:
+            log.warn(f'Failed to list /var/run/ceph: {ce}')
+            raise
+
+        res = p.stdout.getvalue().strip()
+        # Filter for cephfs-mirror sockets using regex
+        asok_names = [
+            line for line in res.splitlines()
+            if re.search(r'cephfs-mirror.*\.asok$', line)
+        ]
+
+        if not asok_names:
+            log.error(f"No mirror socket files found in output: {res}")
+            raise RuntimeError("No cephfs-mirror socket files found on host")
+
+        for asok_name in asok_names:
+            asok_path = f"/var/run/ceph/{asok_name}"
+            log.info(f"Probing mirror socket for liveness: {asok_path}")
+            try:
+                # Use 'counter dump' as a liveness probe
+                p = _shell(self.mount_a.ctx,
+                       'ceph',
+                       self.mount_a.client_remote,
+                       args=['ceph', '--admin-daemon', asok_path, 'counter', 'dump'],
+                       stdout=StringIO(), stderr=StringIO(), timeout=30,
+                       check_status=True, label=cmd_label
+                    )
+                p.wait()
+                log.info(f"Validated active socket: {asok_path}")
+                # Store in the variable to skip future probes
+                self.active_asok = asok_path
+                return self.active_asok
+            except CommandFailedError:
+                log.info(f"Socket {asok_name} is stale. Checking next...")
+                continue
+        raise RuntimeError(f"Found sockets {asok_names}, but none are responding.")
 
     def get_mirror_daemon_pid(self):
         """pid file overloaded in fs/mirror/clients/mirror.yaml"""
@@ -396,10 +453,14 @@ class TestMirroring(CephFSTestCase):
         asok_path = self.get_daemon_admin_socket()
         try:
             # use mount_a's remote to execute command
-            p = self.mount_a.client_remote.run(args=
-                     ['ceph', '--admin-daemon', asok_path] + list(args),
-                     stdout=StringIO(), stderr=StringIO(), timeout=30,
-                     check_status=True, label=cmd_label)
+            # is_cephadm = 'cephadm' in self.ctx.managers
+            p = _shell(self.mount_a.ctx,
+                   'ceph',
+                   self.mount_a.client_remote,
+                   args= ['ceph', '--admin-daemon', asok_path] + list(args),
+                   stdout=StringIO(), stderr=StringIO(), timeout=30,
+                   check_status=True, label=cmd_label
+                )
             p.wait()
         except CommandFailedError as ce:
             log.warn(f'mirror daemon command with label "{cmd_label}" failed: {ce}')

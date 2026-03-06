@@ -10,6 +10,7 @@ from teuthology.exceptions import ConfigError
 from teuthology.task import Task
 from tasks.ceph_manager import get_valgrind_args
 from tasks.util import get_remote_for_role
+from tasks.cephadm import _shell
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +58,15 @@ class CephFSMirror(Task):
         if 'run_in_foreground' in self.config:
             args.extend(['--foreground'])
 
-        self.ctx.daemons.add_daemon(
+        _shell(self.ctx,
+               self.cluster_name,
+               self.remote,
+               ['ceph', 'orch', 'apply', 'cephfs-mirror']
+        )
+        self.ctx.daemons.register_daemon(
             self.remote, 'cephfs-mirror', self.client,
+            cluster=self.cluster_name,
+            fsid=self.ctx.ceph[self.cluster_name].fsid,
             args=args,
             logger=self.log.getChild(self.client),
             stdin=run.PIPE,

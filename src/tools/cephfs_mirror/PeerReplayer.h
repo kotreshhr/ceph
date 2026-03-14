@@ -9,6 +9,7 @@
 #include "mds/FSMap.h"
 #include "ServiceDaemon.h"
 #include "Types.h"
+#include "Utils.h"
 
 #include <stack>
 #include <boost/optional.hpp>
@@ -24,7 +25,7 @@ public:
   PeerReplayer(CephContext *cct, FSMirror *fs_mirror,
                RadosRef local_cluster, const Filesystem &filesystem,
                const Peer &peer, const std::set<std::string, std::less<>> &directories,
-               MountRef mount, ServiceDaemon *service_daemon);
+               MountRef mount, KernelMount &local_kmount, ServiceDaemon *service_daemon);
   ~PeerReplayer();
 
   // initialize replayer for a peer
@@ -500,6 +501,7 @@ private:
   std::vector<std::string> m_directories;
   std::map<std::string, SnapSyncStat> m_snap_sync_stats;
   MountRef m_local_mount;
+  KernelMount& m_local_kmount; //local kernel mount
   ServiceDaemon *m_service_daemon;
   PeerReplayerAdminSocketHook *m_asok_hook = nullptr;
 
@@ -524,6 +526,9 @@ private:
   ServiceDaemonStats m_service_daemon_stats;
 
   PerfCounters *m_perf_counters;
+
+  // Kernel CephFS mounts for data transfer (read/write)
+  KernelMount m_remote_kernel_mount;
 
   void run(SnapshotReplayerThread *replayer);
   void run_datasync(SnapshotDataSyncThread *data_replayer);
@@ -577,8 +582,13 @@ private:
   int remote_file_op(std::shared_ptr<SyncMechanism>& syncm, const std::string &dir_root,
                      const std::string &epath, const struct ceph_statx &stx,
                      bool sync_check, const FHandles &fh, bool need_data_sync, bool need_attr_sync);
-  int copy_to_remote(const std::string &dir_root, const std::string &epath, const struct ceph_statx &stx,
+  int copy_to_remote(std::shared_ptr<SyncMechanism>& syncm, const std::string &dir_root,
+                     const std::string &epath, const struct ceph_statx &stx,
                      const FHandles &fh, uint64_t num_blocks, struct cblock *b);
+  // Kernel-based data copy: uses kernel mount fds for read/write
+  int kernel_copy_to_remote(std::shared_ptr<SyncMechanism>& syncm, const std::string &dir_root,
+                            const std::string &epath, const struct ceph_statx &stx,
+                            uint64_t num_blocks, struct cblock *b);
   int sync_perms(const std::string& path);
 
   // add syncm to syncm_q

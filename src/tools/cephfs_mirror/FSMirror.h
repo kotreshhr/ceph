@@ -10,6 +10,7 @@
 #include "Types.h"
 #include "InstanceWatcher.h"
 #include "MirrorWatcher.h"
+#include "Utils.h"
 
 class ContextWQ;
 
@@ -167,6 +168,8 @@ private:
   MirrorAdminSocketHook *m_asok_hook = nullptr;
 
   MountRef m_mount;
+  // Kernel CephFS mounts for data transfer (read/write)
+  KernelMount m_local_kmount;
 
   PerfCounters *m_perf_counters;
 

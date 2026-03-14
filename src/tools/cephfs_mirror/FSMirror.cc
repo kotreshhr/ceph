@@ -163,6 +163,8 @@ void FSMirror::shutdown_replayer(PeerReplayer *peer_replayer) {
 
 void FSMirror::cleanup() {
   dout(20) << dendl;
+  // Shutdown kernel mounts first
+  m_local_kmount.shutdown();
   ceph_unmount(m_mount);
   ceph_release(m_mount);
   m_ioctx.close();
@@ -213,6 +215,26 @@ void FSMirror::init(Context *on_finish) {
 
   m_addrs = m_cluster->get_addrs();
   dout(10) << ": rados addrs=" << m_addrs << dendl;
+
+  // Local kernel mount
+  auto conf = g_ceph_context->_conf;
+  std::string local_client = conf->name.to_str();
+  std::string mon_host = get_mon_host(g_ceph_context);
+  std::string local_key;
+
+  r = get_loaded_cephx_key(&local_key);
+  if (r < 0) {
+    derr << ": error loading cephx key from keyring for kernel mount (" << cpp_strerror(r)
+         << "), will use libcephfs for data I/O" << dendl;
+  } else {
+    r = m_local_kmount.init(m_cluster, mon_host, m_filesystem.fs_name, local_client, local_key);
+    if (r < 0) {
+      dout(1) << ": local kernel mount failed (" << cpp_strerror(r)
+              << "), will use libcephfs for data I/O" << dendl;
+    } else {
+      dout(5) << ": local kernel mount setup successfully" << dendl;
+    }
+  }
 
   init_instance_watcher(on_finish);
 }
@@ -421,7 +443,7 @@ void FSMirror::add_peer(const Peer &peer) {
   }
 
   auto replayer = std::make_unique<PeerReplayer>(
-    m_cct, this, m_cluster, m_filesystem, peer, m_directories, m_mount, m_service_daemon);
+    m_cct, this, m_cluster, m_filesystem, peer, m_directories, m_mount, m_local_kmount, m_service_daemon);
   int r = init_replayer(replayer.get());
   if (r < 0) {
     m_service_daemon->add_or_update_peer_attribute(m_filesystem.fscid, peer,

@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <sys/time.h>
 #include <sys/file.h>
+#include <unistd.h>          // ADD: for ::read, ::write, ::close, ::open
+#include <sys/stat.h>        // ADD: for ::openat
 #include <boost/optional/optional_io.hpp>
 #include <boost/scope_exit.hpp>
 
@@ -168,7 +170,7 @@ private:
 PeerReplayer::PeerReplayer(CephContext *cct, FSMirror *fs_mirror,
                            RadosRef local_cluster, const Filesystem &filesystem,
                            const Peer &peer, const std::set<std::string, std::less<>> &directories,
-                           MountRef mount, ServiceDaemon *service_daemon)
+                           MountRef mount, KernelMount &local_kmount, ServiceDaemon *service_daemon)
   : m_cct(cct),
     m_fs_mirror(fs_mirror),
     m_local_cluster(local_cluster),
@@ -176,6 +178,7 @@ PeerReplayer::PeerReplayer(CephContext *cct, FSMirror *fs_mirror,
     m_peer(peer),
     m_directories(directories.begin(), directories.end()),
     m_local_mount(mount),
+    m_local_kmount(local_kmount),
     m_service_daemon(service_daemon),
     m_asok_hook(new PeerReplayerAdminSocketHook(cct, filesystem, peer, this)),
     m_lock(ceph::make_mutex("cephfs::mirror::PeerReplayer::" + stringify(peer.uuid))),
@@ -286,6 +289,16 @@ int PeerReplayer::init() {
     return r;
   }
 
+  // Setup remote kernel mounts for data transfer.
+  // It is optional — if it fails, fall back to libcephfs for data I/O.
+  r = m_remote_kernel_mount.init(m_remote_cluster, mon_host, m_peer.remote.fs_name, remote_client, cephx_key);
+  if (r < 0) {
+    dout(1) << ": remote kernel mount failed (" << cpp_strerror(r)
+            << "), will use libcephfs for data I/O" << dendl;
+  } else {
+    dout(5) << ": remote kernel mount setup successfully" << dendl;
+  }
+
   std::scoped_lock locker(m_lock);
   auto nr_replayers = g_ceph_context->_conf.get_val<uint64_t>(
     "cephfs_mirror_max_concurrent_directory_syncs");
@@ -347,6 +360,9 @@ void PeerReplayer::shutdown() {
     replayer->join();
   }
   m_replayers.clear();
+
+  // Shutdown kernel mounts first
+  m_remote_kernel_mount.shutdown();
 
   ceph_unmount(m_remote_mount);
   ceph_release(m_remote_mount);
@@ -692,11 +708,26 @@ int PeerReplayer::SyncMechanism::remote_mkdir(const std::string &epath, const st
 
 #define NR_IOVECS 8 // # iovecs
 #define IOVEC_SIZE (8 * 1024 * 1024) // buffer size for each iovec
-int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string &epath,
+int PeerReplayer::copy_to_remote(std::shared_ptr<SyncMechanism>& syncm,
+                                 const std::string &dir_root,  const std::string &epath,
                                  const struct ceph_statx &stx, const FHandles &fh,
                                  uint64_t num_blocks, struct cblock *b) {
   dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", num_blocks="
            << num_blocks << dendl;
+
+  // Try kernel-based copy first (faster data path)
+  if (m_local_kmount.is_valid() && m_remote_kernel_mount.is_valid()) {
+    int kr = kernel_copy_to_remote(syncm, dir_root, epath, stx, num_blocks, b);
+    if (kr != -ENOENT && kr != -EACCES) {
+      // kernel copy succeeded or hit a real error — use the result
+      return kr;
+    }
+    // Fall through to libcephfs path on ENOENT/EACCES (kernel mount
+    // may not have access to .snap directories)
+    dout(5) << ": kernel copy failed with " << cpp_strerror(kr)
+            << ", falling back to libcephfs" << dendl;
+  }
+
   int l_fd;
   int r_fd;
   void *ptr;
@@ -830,6 +861,134 @@ close_local_fd:
   return r == 0 ? 0 : r;
 }
 
+#define KERNEL_BUF_SIZE (8 * 1024 * 1024) // 8MB buffer for kernel I/O
+int PeerReplayer::kernel_copy_to_remote(std::shared_ptr<SyncMechanism>& syncm,
+                                        const std::string &dir_root,
+                                        const std::string &epath,
+                                        const struct ceph_statx &stx,
+                                        uint64_t num_blocks, struct cblock *b) {
+  dout(10) << ": kernel copy dir_root=" << dir_root << ", epath=" << epath
+           << ", num_blocks=" << num_blocks << dendl;
+
+  auto cur_snap_path = snapshot_path(m_cct, dir_root, syncm->get_m_current().first);
+
+  // Full local read path: <snap_path>/<epath>
+  std::string local_path = std::string(cur_snap_path) + "/" + epath;
+  // Remove leading '/' since openat is relative to root_fd
+  if (!local_path.empty() && local_path[0] == '/') {
+    local_path = local_path.substr(1);
+  }
+
+  std::string remote_path = dir_root;
+  if (!remote_path.empty() && remote_path[0] == '/') {
+    remote_path = remote_path.substr(1);
+  }
+  if (!remote_path.empty()) {
+    remote_path += "/" + epath;
+  } else {
+    remote_path = epath;
+  }
+
+  int r = 0;
+  // Open local file for reading via kernel mount
+  int l_fd = ::openat(m_local_kmount.root_fd(), local_path.c_str(),
+                      O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (l_fd < 0) {
+    r = -errno;
+    dout(5) << ": failed to open local kernel file=" << local_path
+            << ": " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  // Open/create remote file for writing via kernel mount
+  int r_fd = ::openat(m_remote_kernel_mount.root_fd(), remote_path.c_str(),
+                      O_CREAT | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, stx.stx_mode);
+  if (r_fd < 0) {
+    r = -errno;
+    dout(5) << ": failed to open remote kernel file=" << remote_path
+            << ": " << cpp_strerror(r) << dendl;
+    ::close(l_fd);
+    return r;
+  }
+
+  // Allocate I/O buffer
+  char *buf = (char*)::malloc(KERNEL_BUF_SIZE);
+  if (!buf) {
+    derr << ": failed to allocate kernel I/O buffer" << dendl;
+    ::close(r_fd);
+    ::close(l_fd);
+    return -ENOMEM;
+  }
+
+  r = 0;
+  while (num_blocks > 0) {
+    auto offset = b->offset;
+    auto len = b->len;
+
+    dout(10) << ": kernel block [" << offset << "~" << len << "]" << dendl;
+
+    auto end_offset = offset + len;
+    while (offset < end_offset) {
+      if (should_backoff(dir_root, &r)) {
+        dout(0) << ": backing off r=" << r << dendl;
+        goto done;
+      }
+
+      auto to_read = std::min((uint64_t)KERNEL_BUF_SIZE, end_offset - offset);
+
+      ssize_t nr = ::pread(l_fd, buf, to_read, offset);
+      if (nr < 0) {
+        r = -errno;
+        derr << ": kernel pread failed path=" << local_path << " offset="
+             << offset << ": " << cpp_strerror(r) << dendl;
+        goto done;
+      }
+      if (nr == 0) {
+        break; // EOF
+      }
+
+      dout(10) << ": kernel read " << nr << " bytes at offset " << offset << dendl;
+      size_t written = 0;
+      while (written < (size_t)nr) {
+        ssize_t nw = ::pwrite(r_fd,
+                              buf + written,
+                              nr - written,
+                              offset + written);
+        if (nw < 0) {
+          r = -errno;
+          goto done;
+        }
+        written += nw;
+      }
+      offset += written;
+    }
+    --num_blocks;
+    ++b;
+  }
+
+  // Truncate remote file to exact size
+  if (r >= 0) {
+    dout(20) << ": kernel truncating " << remote_path << " to " << stx.stx_size << dendl;
+    if (::ftruncate(r_fd, stx.stx_size) < 0) {
+      r = -errno;
+      derr << ": kernel ftruncate failed path=" << remote_path << ": "
+           << cpp_strerror(r) << dendl;
+    }
+  }
+
+done:
+  ::free(buf);
+  ::close(r_fd);
+  ::close(l_fd);
+
+  if (r < 0) {
+    return r;
+  }
+
+  dout(10) << ": kernel copy completed for " << epath << dendl;
+  return 0;
+}
+
 int PeerReplayer::remote_file_op(std::shared_ptr<SyncMechanism>& syncm, const std::string &dir_root,
                                  const std::string &epath, const struct ceph_statx &stx,
                                  bool sync_check, const FHandles &fh, bool need_data_sync, bool need_attr_sync) {
@@ -840,8 +999,8 @@ int PeerReplayer::remote_file_op(std::shared_ptr<SyncMechanism>& syncm, const st
   if (need_data_sync) {
     if (S_ISREG(stx.stx_mode)) {
       r = syncm->get_changed_blocks(epath, stx, sync_check,
-                                    [this, &dir_root, &epath, &stx, &fh](uint64_t num_blocks, struct cblock *b) {
-                                      int ret = copy_to_remote(dir_root, epath, stx, fh, num_blocks, b);
+                                    [this, &dir_root, &epath, &stx, &fh, &syncm](uint64_t num_blocks, struct cblock *b) {
+                                      int ret = copy_to_remote(syncm, dir_root, epath, stx, fh, num_blocks, b);
                                       if (ret < 0) {
                                         derr << ": failed to copy path=" << epath << ": " << ret << dendl;
                                       }

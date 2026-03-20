@@ -589,6 +589,21 @@ private:
   int kernel_copy_to_remote(std::shared_ptr<SyncMechanism>& syncm, const std::string &dir_root,
                             const std::string &epath, const struct ceph_statx &stx,
                             uint64_t num_blocks, struct cblock *b);
+  int copy_to_remote_kernel_write(
+    std::shared_ptr<SyncMechanism>& syncm,
+    const std::string &dir_root,
+    const std::string &epath,
+    const struct ceph_statx &stx,
+    const FHandles &fh,
+    uint64_t num_blocks,
+    struct cblock *b);
+  int kernel_copy_to_remote_preadv(
+    std::shared_ptr<SyncMechanism>& syncm,
+    const std::string &dir_root,
+    const std::string &epath,
+    const struct ceph_statx &stx,
+    uint64_t num_blocks,
+    struct cblock *b);
   int sync_perms(const std::string& path);
 
   // add syncm to syncm_q

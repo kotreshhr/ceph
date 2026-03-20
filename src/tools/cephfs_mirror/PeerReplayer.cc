@@ -708,16 +708,307 @@ int PeerReplayer::SyncMechanism::remote_mkdir(const std::string &epath, const st
 
 #define NR_IOVECS 8 // # iovecs
 #define IOVEC_SIZE (8 * 1024 * 1024) // buffer size for each iovec
+int PeerReplayer::copy_to_remote_kernel_write(
+    std::shared_ptr<SyncMechanism>& syncm,
+    const std::string &dir_root,
+    const std::string &epath,
+    const struct ceph_statx &stx,
+    const FHandles &fh,
+    uint64_t num_blocks,
+    struct cblock *b)
+{
+  int l_fd;
+  int r_fd;
+  void *ptr;
+  struct iovec iov[NR_IOVECS];
+  int r = 0;
+
+  // ---- open local via libcephfs ----
+  r = ceph_openat(m_local_mount, fh.c_fd, epath.c_str(),
+                  O_RDONLY | O_NOFOLLOW, 0);
+  if (r < 0) {
+    derr << ": failed to open local file path=" << epath
+         << ": " << cpp_strerror(r) << dendl;
+    return r;
+  }
+  l_fd = r;
+
+  // ---- build remote path ----
+  std::string remote_path = dir_root;
+  if (!remote_path.empty() && remote_path[0] == '/')
+    remote_path = remote_path.substr(1);
+  if (!remote_path.empty())
+    remote_path += "/" + epath;
+  else
+    remote_path = epath;
+
+  // ---- open remote via kernel ----
+  r_fd = ::openat(m_remote_kernel_mount.root_fd(),
+                  remote_path.c_str(),
+                  O_CREAT | O_WRONLY | O_NOFOLLOW | O_CLOEXEC,
+                  stx.stx_mode);
+  if (r_fd < 0) {
+    r = -errno;
+    derr << ": failed to open remote kernel file path="
+         << remote_path << ": " << cpp_strerror(r) << dendl;
+    goto close_local;
+  }
+
+  // ---- allocate buffer ----
+  ptr = malloc(NR_IOVECS * IOVEC_SIZE);
+  if (!ptr) {
+    r = -ENOMEM;
+    goto close_remote;
+  }
+
+  // ---- copy loop ----
+  while (num_blocks > 0) {
+    auto offset = b->offset;
+    auto len = b->len;
+    auto end_offset = offset + len;
+
+    while (offset < end_offset) {
+      if (should_backoff(dir_root, &r)) {
+        break;
+      }
+
+      size_t cut_off = std::min<uint64_t>(len, NR_IOVECS * IOVEC_SIZE);
+
+      int num_buffers = cut_off / IOVEC_SIZE;
+      if (cut_off % IOVEC_SIZE)
+        ++num_buffers;
+
+      size_t tmp = cut_off;
+      for (int i = 0; i < num_buffers; ++i) {
+        iov[i].iov_base = (char *)ptr + IOVEC_SIZE * i;
+        if (tmp < IOVEC_SIZE) {
+          iov[i].iov_len = tmp;
+        } else {
+          iov[i].iov_len = IOVEC_SIZE;
+          tmp -= IOVEC_SIZE;
+        }
+      }
+
+      // ---- read via libcephfs ----
+      r = ceph_preadv(m_local_mount, l_fd, iov, num_buffers, offset);
+      if (r < 0) {
+        derr << ": failed to read local file path=" << epath
+             << ": " << cpp_strerror(r) << dendl;
+        break;
+      }
+      if (r == 0)
+        break;
+
+      // adjust iovecs to actual read size
+      int iovs = r / IOVEC_SIZE;
+      int rem = r % IOVEC_SIZE;
+      if (rem) {
+        iov[iovs].iov_len = rem;
+        ++iovs;
+      }
+
+      // ---- write via kernel ----
+      int r = ::pwritev(r_fd, iov, iovs, offset);
+      if (r < 0) {
+        derr << ": kernel write failed path=" << remote_path
+             << ": " << cpp_strerror(r) << dendl;
+        break;
+      }
+
+      offset += r;
+    }
+
+    --num_blocks;
+    ++b;
+  }
+
+  // truncate
+  if (num_blocks == 0 && r >= 0) {
+    if (::ftruncate(r_fd, stx.stx_size) < 0) {
+      r = -errno;
+    }
+  }
+
+  free(ptr);
+
+close_remote:
+  ::close(r_fd);
+
+close_local:
+  ceph_close(m_local_mount, l_fd);
+
+  return r < 0 ? r : 0;
+}
+
+int PeerReplayer::kernel_copy_to_remote_preadv(
+    std::shared_ptr<SyncMechanism>& syncm,
+    const std::string &dir_root,
+    const std::string &epath,
+    const struct ceph_statx &stx,
+    uint64_t num_blocks,
+    struct cblock *b)
+{
+  dout(10) << ": kernel copy preadv/pwritev dir_root=" << dir_root << ", epath=" << epath
+           << ", num_blocks=" << num_blocks << dendl;
+  auto cur_snap_path = snapshot_path(m_cct, dir_root, syncm->get_m_current().first);
+
+  // Full local read path: <snap_path>/<epath>
+  std::string local_path = std::string(cur_snap_path) + "/" + epath;
+  // Remove leading '/' since openat is relative to root_fd
+  if (!local_path.empty() && local_path[0] == '/') {
+    local_path = local_path.substr(1);
+  }
+
+  std::string remote_path = dir_root;
+  if (!remote_path.empty() && remote_path[0] == '/') {
+    remote_path = remote_path.substr(1);
+  }
+  if (!remote_path.empty()) {
+    remote_path += "/" + epath;
+  } else {
+    remote_path = epath;
+  }
+
+  int r = 0;
+  // Open local file for reading via kernel mount
+  int l_fd = ::openat(m_local_kmount.root_fd(), local_path.c_str(),
+                      O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (l_fd < 0) {
+    return -errno;
+    dout(5) << ": failed to open local kernel file=" << local_path
+            << ": " << cpp_strerror(r) << dendl;
+    return r;
+  }
+
+  // Open/create remote file for writing via kernel mount
+  int r_fd = ::openat(m_remote_kernel_mount.root_fd(), remote_path.c_str(),
+                      O_CREAT | O_WRONLY | O_NOFOLLOW | O_CLOEXEC, stx.stx_mode);
+  if (r_fd < 0) {
+    r = -errno;
+    dout(5) << ": failed to open remote kernel file=" << remote_path
+            << ": " << cpp_strerror(r) << dendl;
+    ::close(l_fd);
+    return r;
+  }
+
+  void *ptr = malloc(NR_IOVECS * IOVEC_SIZE);
+  if (!ptr) {
+    ::close(r_fd);
+    ::close(l_fd);
+    return -ENOMEM;
+  }
+
+  struct iovec iov[NR_IOVECS];
+
+  r = 0;
+  while (num_blocks > 0) {
+    uint64_t offset = b->offset;
+    auto len = b->len;
+
+    dout(10) << ": kernel block [" << offset << "~" << len << "]" << dendl;
+
+    auto end_offset = offset + len;
+    while (offset < end_offset) {
+      if (should_backoff(dir_root, &r)) {
+        dout(0) << ": backing off r=" << r << dendl;
+        goto done;
+      }
+
+      size_t cut_off = std::min<uint64_t>(len, NR_IOVECS * IOVEC_SIZE);
+
+      int num_buffers = cut_off / IOVEC_SIZE;
+      if (cut_off % IOVEC_SIZE)
+        ++num_buffers;
+
+      size_t tmp = cut_off;
+      for (int i = 0; i < num_buffers; ++i) {
+        iov[i].iov_base = (char*)ptr + i * IOVEC_SIZE;
+        iov[i].iov_len = std::min(tmp, (size_t)IOVEC_SIZE);
+        tmp -= iov[i].iov_len;
+      }
+
+      ssize_t nr = ::preadv(l_fd, iov, num_buffers, offset);
+      if (nr < 0) {
+        derr << ": failed to read local file path=" << epath
+             << ": " << cpp_strerror(nr) << dendl;
+        break;
+      }
+      dout(10) << ": read: " << nr << " bytes" << dendl;
+      if (nr == 0)
+        break;
+
+      // adjust iovecs to actual read size
+      int iovs = nr / IOVEC_SIZE;
+      int rem = nr % IOVEC_SIZE;
+      if (rem) {
+        iov[iovs].iov_len = rem;
+        ++iovs;
+      }
+
+      dout(10) << ": writing to offset: " << offset << dendl;
+      ssize_t written = 0;
+      off_t woff = offset;
+
+      while (written < nr) {
+        ssize_t nw = ::pwritev(r_fd, iov, iovs, woff);
+        if (nw < 0) {
+          r = -errno;
+          derr << ": failed to write remote file path=" << epath << ": "
+               << cpp_strerror(r) << dendl;
+          goto done;
+        }
+
+        written += nw;
+        woff += nw;
+
+        ssize_t adv = nw;
+        for (int i = 0; i < iovs && adv > 0; ++i) {
+          if (adv >= (ssize_t)iov[i].iov_len) {
+            adv -= iov[i].iov_len;
+            iov[i].iov_len = 0;
+          } else {
+            iov[i].iov_base = (char*)iov[i].iov_base + adv;
+            iov[i].iov_len -= adv;
+            adv = 0;
+          }
+        }
+      }
+
+      offset += nr;
+    }
+
+    --num_blocks;
+    ++b;
+  }
+
+  if (num_blocks == 0 && r >= 0) {
+    dout(20) << ": truncating epath=" << epath << " to " << stx.stx_size << " bytes"
+             << dendl;
+    if (::ftruncate(r_fd, stx.stx_size) < 0) {
+      r = -errno;
+      derr << ": failed to truncate remote file path=" << epath << ": "
+           << cpp_strerror(r) << dendl;
+    }
+  }
+
+done:
+  free(ptr);
+  ::close(r_fd);
+  ::close(l_fd);
+  dout(20) << ": dir_root=" << dir_root << ", epath=" << epath << " error=" << r << " synced" << dendl;
+
+  return r < 0 ? r : 0;
+}
+
 int PeerReplayer::copy_to_remote(std::shared_ptr<SyncMechanism>& syncm,
                                  const std::string &dir_root,  const std::string &epath,
                                  const struct ceph_statx &stx, const FHandles &fh,
                                  uint64_t num_blocks, struct cblock *b) {
-  dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", num_blocks="
-           << num_blocks << dendl;
-
   // Try kernel-based copy first (faster data path)
-  if (m_local_kmount.is_valid() && m_remote_kernel_mount.is_valid()) {
-    int kr = kernel_copy_to_remote(syncm, dir_root, epath, stx, num_blocks, b);
+  if (m_remote_kernel_mount.is_valid() && false) {
+    //int kr = copy_to_remote_kernel_write(syncm, dir_root, epath, stx, fh, num_blocks, b);
+    //int kr = kernel_copy_to_remote(syncm, dir_root, epath, stx, num_blocks, b);
+    int kr = kernel_copy_to_remote_preadv(syncm, dir_root, epath, stx, num_blocks, b);
     if (kr != -ENOENT && kr != -EACCES) {
       // kernel copy succeeded or hit a real error — use the result
       return kr;
@@ -727,6 +1018,9 @@ int PeerReplayer::copy_to_remote(std::shared_ptr<SyncMechanism>& syncm,
     dout(5) << ": kernel copy failed with " << cpp_strerror(kr)
             << ", falling back to libcephfs" << dendl;
   }
+
+  dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", num_blocks="
+           << num_blocks << dendl;
 
   int l_fd;
   int r_fd;
@@ -861,7 +1155,7 @@ close_local_fd:
   return r == 0 ? 0 : r;
 }
 
-#define KERNEL_BUF_SIZE (8 * 1024 * 1024) // 8MB buffer for kernel I/O
+#define KERNEL_BUF_SIZE (64 * 1024) // 8MB buffer for kernel I/O
 int PeerReplayer::kernel_copy_to_remote(std::shared_ptr<SyncMechanism>& syncm,
                                         const std::string &dir_root,
                                         const std::string &epath,

@@ -116,3 +116,10 @@ class Module(MgrModule):
                                       format: str = 'json'):
         """Get mirror daemon status"""
         return self.fs_snapshot_mirror.daemon_status(format)
+
+    @MirroringCLICommand.Read('fs snapshot mirror status')
+    def snapshot_mirror_status(self,
+                               fs_name: str,
+                               mirrored_dir_path: str):
+        """Get snapshot mirror metrics status for a mirrored directory"""
+        return self.fs_snapshot_mirror.metrics_status(fs_name, mirrored_dir_path)

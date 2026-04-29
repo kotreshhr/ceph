@@ -8,7 +8,7 @@ import re
 import stat
 import threading
 import uuid
-from typing import Dict, Any
+from typing import Any, Dict
 
 import cephfs
 import rados
@@ -763,6 +763,10 @@ class FSSnapshotMirror:
                 return fspolicy.summary()
         except MirrorException as me:
             return me.args[0], '', me.args[1]
+
+    def metrics_status(self, filesystem, mirrored_dir_path):
+        """Return cephfs mirror metrics as JSON"""
+        return 0, json.dumps({}), ''
 
     def daemon_status(self, format='json'):
         try:

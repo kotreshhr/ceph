@@ -2730,14 +2730,7 @@ void PeerReplayer::peer_status(Formatter *f) {
   f->open_object_section("stats");
   for (auto &[dir_root, sync_stat] : m_snap_sync_stats) {
     f->open_object_section(dir_root);
-    if (sync_stat.failed) {
-      f->dump_string("state", "failed");
-      if (sync_stat.last_failed_reason) {
-	f->dump_string("failure_reason", *sync_stat.last_failed_reason);
-      }
-    } else if (!sync_stat.current_syncing_snap) {
-      f->dump_string("state", "idle");
-    } else {
+    if (sync_stat.current_syncing_snap) {
       f->dump_string("state", "syncing");
       f->open_object_section("current_syncing_snap");
       f->dump_unsigned("id", (*sync_stat.current_syncing_snap).first);
@@ -2793,6 +2786,15 @@ void PeerReplayer::peer_status(Formatter *f) {
       else
         f->dump_string("eta", format_time(compute_eta(sync_stat)));
       f->close_section(); //current_syncing_snap
+    } else if (m_registered.count(dir_root)) {
+      f->dump_string("state", "syncing");
+    } else if (sync_stat.failed) {
+      f->dump_string("state", "failed");
+      if (sync_stat.last_failed_reason) {
+	f->dump_string("failure_reason", *sync_stat.last_failed_reason);
+      }
+    } else {
+      f->dump_string("state", "idle");
     }
     if (sync_stat.last_synced_snap) {
       f->open_object_section("last_synced_snap");

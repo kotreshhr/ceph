@@ -50,6 +50,7 @@ private:
 
   inline static const std::string SERVICE_DAEMON_FAILED_DIR_COUNT_KEY = "failure_count";
   inline static const std::string SERVICE_DAEMON_RECOVERED_DIR_COUNT_KEY = "recovery_count";
+  inline static const std::string SERVICE_DAEMON_DIRECTORY_METRICS_KEY = "directory_metrics";
   inline static const std::string PEER_SYNC_STAT_KEY_PREFIX = "sync_stat";
 
   using Snapshot = std::pair<std::string, uint64_t>;
@@ -618,6 +619,7 @@ private:
   FSMirror *m_fs_mirror;
   RadosRef m_local_cluster;
   IoCtxRef m_local_ioctx;
+  std::string m_local_instance_id;
   Filesystem m_filesystem;
   Peer m_peer;
   // probably need to be encapsulated when supporting cancelations
@@ -737,10 +739,14 @@ private:
     return datasync_files_per_batch.exchange(value, std::memory_order_relaxed);
   }
 
+  json_spirit::mObject build_peer_sync_active_snap_section_nolock(
+      const SnapSyncStat &sync_stat) const;
+  void publish_directory_metrics_to_service_daemon();
+
   // format routines for peer_status
   static std::string format_bytes(double bytes);
   static std::string format_time(double total_seconds);
-  static double compute_eta(SnapSyncStat& sync_stat);
+  static double compute_eta(const SnapSyncStat &sync_stat);
 };
 
 } // namespace mirror

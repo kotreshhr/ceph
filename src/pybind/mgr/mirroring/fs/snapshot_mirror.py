@@ -2,13 +2,16 @@ import base64
 import errno
 import json
 import logging
+import math
 import os
 import pickle
 import re
 import stat
+import time
 import threading
 import uuid
-from typing import Any, Dict
+from collections import defaultdict
+from typing import Any, Dict, List, Optional, Tuple
 
 import cephfs
 import rados
@@ -30,6 +33,353 @@ from .dir_map.state_transition import ActionType
 log = logging.getLogger(__name__)
 
 CEPHFS_IMAGE_POLICY_UPDATE_THROTTLE_INTERVAL = 1
+SYNC_STAT_KEY_PREFIX = 'sync_stat'
+MAX_OMAP_RETURN = 256
+METRICS_CACHE_TTL_SEC = 2.0
+
+
+def _format_time(total_seconds: float) -> str:
+    # Match PeerReplayer::format_time() output style.
+    sec = int(math.floor(float(total_seconds) + 0.5))
+    days = sec // 86400
+    sec %= 86400
+    hours = sec // 3600
+    sec %= 3600
+    minutes = sec // 60
+    seconds = sec % 60
+
+    if days > 0:
+        return f'{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s'
+    if hours > 0:
+        return f'{hours}h {minutes:02d}m {seconds:02d}s'
+    if minutes > 0:
+        return f'{minutes}m {seconds:02d}s'
+    return f'{seconds}s'
+
+
+def _format_bytes(total_bytes: float) -> str:
+    # Match PeerReplayer::format_bytes() units/precision.
+    kib = 1024.0
+    mib = kib * 1024.0
+    gib = mib * 1024.0
+    tib = gib * 1024.0
+    pib = tib * 1024.0
+    value = float(total_bytes)
+    if value >= pib:
+        return f'{value / pib:.2f} PiB'
+    if value >= tib:
+        return f'{value / tib:.2f} TiB'
+    if value >= gib:
+        return f'{value / gib:.2f} GiB'
+    if value >= mib:
+        return f'{value / mib:.2f} MiB'
+    if value >= kib:
+        return f'{value / kib:.2f} KiB'
+    return f'{value:.2f} B'
+
+
+def _omap_scan_prefix(ioctx, prefix: str):
+    """Yield (key, raw_value) for omap keys under prefix on cephfs_mirror object."""
+    start = ''
+    while True:
+        with rados.ReadOpCtx() as read_op:
+            it, ret = ioctx.get_omap_vals(read_op, start, prefix, MAX_OMAP_RETURN)
+            if ret != 0:
+                log.error(f'mirror metrics omap scan failed prefix={prefix!r} ret={ret}')
+                break
+            ioctx.operate_read_op(read_op, MIRROR_OBJECT_NAME)
+            batch = dict(it)
+            if not batch:
+                break
+            for k, v in batch.items():
+                yield k, v
+            start = batch.popitem()[0]
+
+
+def _dir_path_from_sync_stat_key(prefix: str, key: str) -> Optional[str]:
+    if not key.startswith(prefix):
+        return None
+    suffix = key[len(prefix):]
+    parts = suffix.split('/', 1)
+    if len(parts) != 2:
+        return None
+    dir_suffix = parts[1]
+    return '/' + dir_suffix if dir_suffix else '/'
+
+
+def _metrics_from_sync_stat_json(obj: Dict[str, Any]) -> Dict[str, Any]:
+    """Map sync_stat omap JSON to directory_metrics-like dict (durable / completion fields)."""
+    out: Dict[str, Any] = {'state': 'idle'}
+    if 'last_synced_time' in obj:
+        out['__last_synced_mono'] = float(obj['last_synced_time'])
+    if 'last_synced_snap_id' in obj and 'last_synced_snap_name' in obj:
+        ls: Dict[str, Any] = {
+            'id': int(obj['last_synced_snap_id']),
+            'name': obj['last_synced_snap_name'],
+        }
+        if 'last_sync_crawl_duration' in obj:
+            ls['crawl_duration'] = _format_time(float(obj['last_sync_crawl_duration']))
+        if 'last_sync_datasync_queue_wait_duration' in obj:
+            ls['datasync_queue_wait_duration'] = _format_time(
+                float(obj['last_sync_datasync_queue_wait_duration']))
+        if 'last_sync_duration' in obj:
+            ls['sync_duration'] = _format_time(float(obj['last_sync_duration']))
+        if 'last_synced_time' in obj:
+            ls['sync_time_stamp'] = str(obj['last_synced_time'])
+        if 'last_sync_bytes' in obj:
+            ls['sync_bytes'] = _format_bytes(float(obj['last_sync_bytes']))
+        if 'last_sync_files' in obj:
+            ls['sync_files'] = int(obj['last_sync_files'])
+        out['last_synced_snap'] = ls
+    out['snaps_synced'] = int(obj.get('synced_snap_count', 0))
+    out['snaps_deleted'] = int(obj.get('deleted_snap_count', 0))
+    out['snaps_renamed'] = int(obj.get('renamed_snap_count', 0))
+    return out
+
+
+def _pick_better_durable(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
+    ta = float(a.get('__last_synced_mono', -1.0))
+    tb = float(b.get('__last_synced_mono', -1.0))
+    if tb > ta:
+        return b
+    if tb < ta:
+        return a
+    if int(b.get('snaps_synced', 0)) > int(a.get('snaps_synced', 0)):
+        return b
+    if int(b.get('snaps_synced', 0)) < int(a.get('snaps_synced', 0)):
+        return a
+    return a
+
+
+def _strip_internal_metrics(m: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: v for k, v in m.items() if not str(k).startswith('__')}
+
+
+def _ensure_snap_counters(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    out = dict(metrics)
+    out.setdefault('snaps_synced', 0)
+    out.setdefault('snaps_deleted', 0)
+    out.setdefault('snaps_renamed', 0)
+    return out
+
+
+def _reorder_directory_metrics(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    return _reorder_dict_fields(metrics, [
+        'state',
+        'current_syncing_snap',
+        'last_synced_snap',
+        'snaps_synced',
+        'snaps_deleted',
+        'snaps_renamed',
+    ])
+
+
+def _reorder_dict_fields(data: Dict[str, Any], ordered_keys: List[str]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    for key in ordered_keys:
+        if key in data:
+            out[key] = data[key]
+    for key, value in data.items():
+        if key not in out:
+            out[key] = value
+    return out
+
+
+def _reorder_current_syncing_snap(metrics: Dict[str, Any]) -> Dict[str, Any]:
+    cur = metrics.get('current_syncing_snap')
+    if not isinstance(cur, dict):
+        return metrics
+
+    reordered_cur = _reorder_dict_fields(cur, [
+        'id',
+        'name',
+        'sync-mode',
+        'avg_read_throughput_bytes',
+        'avg_write_throughput_bytes',
+        'crawl',
+        'datasync_queue_wait',
+        'bytes',
+        'files',
+        'eta',
+    ])
+
+    for nested_key, nested_order in (
+            ('crawl', ['state', 'duration']),
+            ('datasync_queue_wait', ['state', 'duration']),
+            ('bytes', ['sync_bytes', 'total_bytes', 'sync_percent']),
+            ('files', ['sync_files', 'total_files', 'sync_percent'])):
+        nested = reordered_cur.get(nested_key)
+        if isinstance(nested, dict):
+            reordered_cur[nested_key] = _reorder_dict_fields(nested, nested_order)
+
+    reordered_metrics = dict(metrics)
+    reordered_metrics['current_syncing_snap'] = reordered_cur
+    return reordered_metrics
+
+
+def _parse_directory_metrics_sparse(peer_stats: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """Parse sparse peer directory_metrics: {daemon_instance_id, stats:{path: ...}}."""
+    if not peer_stats:
+        return '', {}
+    raw = peer_stats.get('directory_metrics')
+    if not raw:
+        return '', {}
+    if isinstance(raw, str):
+        try:
+            outer = json.loads(raw)
+        except json.JSONDecodeError:
+            log.warning('invalid directory_metrics JSON from mirror daemon')
+            return '', {}
+    elif isinstance(raw, dict):
+        outer = raw
+    else:
+        return '', {}
+    if not isinstance(outer, dict):
+        return '', {}
+    did = str(outer.get('daemon_instance_id', ''))
+    stats = outer.get('stats', outer)
+    if not isinstance(stats, dict):
+        return did, {}
+    nested_stats = stats.get('stats')
+    if isinstance(nested_stats, dict):
+        stats = nested_stats
+    ordered_stats: Dict[str, Any] = {}
+    for path, data in stats.items():
+        if isinstance(data, dict):
+            ordered_stats[path] = _reorder_current_syncing_snap(data)
+        else:
+            ordered_stats[path] = data
+    return did, ordered_stats
+
+
+def _mark_stale_pushed_metrics(metrics: Dict[str, Any], daemon_key: str,
+                               active_daemon_keys: set) -> Dict[str, Any]:
+    if metrics.get('state') != 'syncing':
+        return metrics
+    if daemon_key not in active_daemon_keys:
+        stale = metrics.copy()
+        stale['state'] = 'stale'
+        stale['stale'] = True
+        stale['stale_reason'] = 'cephfs-mirror daemon no longer active'
+        stale['daemon_key'] = daemon_key
+        return stale
+    return metrics
+
+
+def _merge_durable_with_sparse(base: Dict[str, Any],
+                               overlays: List[Dict[str, Any]],
+                               active_daemon_keys: set) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    # live/in-progress view first (asok-like)
+    for ent in overlays:
+        adj = _mark_stale_pushed_metrics(ent['metrics'], ent['daemon_key'],
+                                         active_daemon_keys)
+        for k, v in adj.items():
+            out[k] = v
+    # append durable tail fields that are not part of live overlay
+    for k, v in base.items():
+        if k not in out:
+            out[k] = v
+    return _reorder_directory_metrics(_ensure_snap_counters(out))
+
+
+def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
+    out: Dict[str, Any] = {}
+    metadata_pool_id = FSSnapshotMirror.get_metadata_pool(filesystem, mgr.get('fs_map'))
+    if metadata_pool_id is None:
+        return out
+    prefix = f'{SYNC_STAT_KEY_PREFIX}/{filesystem}/'
+    try:
+        ioctx = mgr.rados.open_ioctx2(metadata_pool_id)
+    except rados.Error as e:
+        log.error(f'failed to open metadata pool {metadata_pool_id}: {e}')
+        return out
+    try:
+        for key, raw_val in _omap_scan_prefix(ioctx, prefix):
+            dir_path = _dir_path_from_sync_stat_key(prefix, key)
+            if dir_path is None:
+                continue
+            try:
+                obj = json.loads(raw_val.decode('utf-8'))
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+                continue
+            if not isinstance(obj, dict):
+                continue
+            cur = _metrics_from_sync_stat_json(obj)
+            if dir_path in out:
+                out[dir_path] = _pick_better_durable(out[dir_path], cur)
+            else:
+                out[dir_path] = cur
+    except rados.Error as e:
+        log.error(f'failed omap read sync_stat for {filesystem}: {e}')
+    finally:
+        ioctx.close()
+    return out
+
+
+def _collect_sparse_push_by_path(
+        mgr, filesystem: str) -> Tuple[Dict[str, List[Dict[str, Any]]], set]:
+    """Per path, list of {daemon_key, metrics} from in-progress daemon pushes."""
+    by_path: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    sm = mgr.get('service_map') or {}
+    daemon_entry = sm['services'].get('cephfs-mirror', None)
+    active = set()
+    if daemon_entry:
+        active = set(str(d) for d in daemon_entry.get('daemons', []))
+    if not daemon_entry:
+        return by_path, active
+    for daemon_key in daemon_entry.get('daemons', []):
+        dk = str(daemon_key)
+        daemon_status = mgr.get_daemon_status('cephfs-mirror', daemon_key)
+        logging.debug(f"daemon_status - {daemon_status}")
+        if not daemon_status:
+            continue
+        try:
+            status = json.loads(daemon_status['status_json'])
+        except (json.JSONDecodeError, KeyError, TypeError):
+            continue
+        fs_descs: List[Dict[str, Any]] = []
+        if isinstance(status, dict) and isinstance(status.get('filesystems'), dict):
+            fs_descs = [v for v in status.get('filesystems', {}).values()
+                        if isinstance(v, dict)]
+        elif isinstance(status, dict):
+            fs_descs = [v for v in status.values() if isinstance(v, dict)]
+        elif isinstance(status, list):
+            fs_descs = [v for v in status if isinstance(v, dict)]
+
+        if not fs_descs:
+            continue
+        for fs_desc in fs_descs:
+            if fs_desc.get('name') != filesystem:
+                continue
+            for _peer_uuid, peer_desc in fs_desc.get('peers', {}).items():
+                _, stats = _parse_directory_metrics_sparse(peer_desc.get('stats', {}))
+                if not stats:
+                    continue
+                for path, data in stats.items():
+                    if isinstance(data, dict):
+                        norm_path = path
+                        if isinstance(norm_path, str):
+                            if not norm_path.startswith('/'):
+                                norm_path = '/' + norm_path
+                            norm_path = os.path.normpath(norm_path)
+                        by_path[norm_path].append({'daemon_key': dk, 'metrics': data})
+    return by_path, active
+
+
+def _merge_directory_metrics_uncached(mgr, filesystem: str) -> Dict[str, Any]:
+    """Merge durable sync_stat omap with sparse in-progress pushes from mirror daemons."""
+    durable = _load_durable_by_path(mgr, filesystem)
+    sparse, active = _collect_sparse_push_by_path(mgr, filesystem)
+    merged: Dict[str, Any] = {}
+    all_paths = set(durable) | set(sparse)
+    for path in all_paths:
+        base = _ensure_snap_counters(_strip_internal_metrics(durable.get(path, {})))
+        if path in sparse:
+            merged[path] = _merge_durable_with_sparse(base, sparse[path], active)
+        else:
+            merged[path] = _reorder_directory_metrics(base)
+    return merged
 
 class FSPolicy:
     class InstanceListener(InstanceWatcher.Listener):
@@ -288,6 +638,25 @@ class FSSnapshotMirror:
         self.lock = threading.Lock()
         self.refresh_pool_policy()
         self.local_fs = CephfsClient(mgr)
+        self._metrics_cache_lock = threading.Lock()
+        self._metrics_cache_time = 0.0
+        self._metrics_cache_fs = None  # type: Optional[str]
+        self._metrics_cache_value = None  # type: Optional[Dict[str, Any]]
+
+    def merged_directory_metrics(self, filesystem: str) -> Dict[str, Any]:
+        """Omap durable stats + sparse daemon pushes, with a short TTL cache."""
+        now = time.monotonic()
+        with self._metrics_cache_lock:
+            if (self._metrics_cache_fs == filesystem
+                    and self._metrics_cache_value is not None
+                    and (now - self._metrics_cache_time) < METRICS_CACHE_TTL_SEC):
+                return dict(self._metrics_cache_value)
+        data = _merge_directory_metrics_uncached(self.mgr, filesystem)
+        with self._metrics_cache_lock:
+            self._metrics_cache_time = now
+            self._metrics_cache_fs = filesystem
+            self._metrics_cache_value = data
+        return dict(data)
 
     def notify(self, notify_type: NotifyType):
         log.debug(f'got notify type {notify_type}')
@@ -764,9 +1133,38 @@ class FSSnapshotMirror:
         except MirrorException as me:
             return me.args[0], '', me.args[1]
 
-    def metrics_status(self, filesystem, mirrored_dir_path):
-        """Return cephfs mirror metrics as JSON"""
-        return 0, json.dumps({}), ''
+    def metrics_status(self, filesystem: str,
+                       mirrored_dir_path: Optional[str] = None):
+        """Return per-directory mirror metrics (sync_stat omap + sparse daemon push)."""
+        try:
+            with self.lock:
+                if not self.filesystem_exist(filesystem):
+                    raise MirrorException(-errno.ENOENT,
+                                          f'filesystem {filesystem} does not exist')
+                fspolicy = self.pool_policy.get(filesystem, None)
+                if not fspolicy:
+                    raise MirrorException(-errno.EINVAL,
+                                          f'filesystem {filesystem} is not mirrored')
+                tracked_dirs = list(fspolicy.policy.dir_states.keys())
+            metrics = self.merged_directory_metrics(filesystem)
+            for path in tracked_dirs:
+                m = metrics.setdefault(path, {})
+                m.setdefault('state', 'idle')
+                m.setdefault('snaps_synced', 0)
+                m.setdefault('snaps_deleted', 0)
+                m.setdefault('snaps_renamed', 0)
+            if mirrored_dir_path is not None:
+                path = FSSnapshotMirror.norm_path(mirrored_dir_path)
+                if path not in metrics:
+                    raise MirrorException(-errno.ENOENT,
+                                          f'no mirror metrics for directory {path}')
+                return 0, json.dumps({path: metrics[path]}), ''
+            return 0, json.dumps(metrics), ''
+        except MirrorException as me:
+            return me.args[0], '', me.args[1]
+        except Exception as e:
+            log.debug('metrics_status failed: %s', e)
+            return -errno.EINVAL, '', 'failed to get mirror metrics'
 
     def daemon_status(self, format='json'):
         try:

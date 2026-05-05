@@ -8,6 +8,7 @@
 #include "common/Timer.h"
 #include "include/Context.h"
 #include "include/stringify.h"
+#include "json_spirit/json_spirit.h"
 
 #define dout_context g_ceph_context
 #define dout_subsys ceph_subsys_cephfs_mirror
@@ -36,6 +37,11 @@ struct AttributeDumpVisitor {
   }
   void operator()(const std::string &val) const {
     f->dump_string(name.c_str(), val);
+  }
+  void operator()(const json_spirit::mObject &val) const {
+    // dump_stream() always quotes its payload; embed pre-serialized JSON as a value.
+    const std::string s = json_spirit::write(json_spirit::mValue(val));
+    f->dump_format_unquoted(name.c_str(), "%s", s.c_str());
   }
 };
 

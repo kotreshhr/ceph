@@ -120,6 +120,6 @@ class Module(MgrModule):
     @MirroringCLICommand.Read('fs snapshot mirror status')
     def snapshot_mirror_status(self,
                                fs_name: str,
-                               mirrored_dir_path: str):
-        """Get snapshot mirror metrics status for a mirrored directory"""
+                               mirrored_dir_path: Optional[str] = None):
+        """Get snapshot mirror metrics for a filesystem (optional mirrored directory)"""
         return self.fs_snapshot_mirror.metrics_status(fs_name, mirrored_dir_path)

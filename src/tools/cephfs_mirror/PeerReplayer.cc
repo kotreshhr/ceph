@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include <stack>
+#include <sstream>
 #include <fcntl.h>
 #include <algorithm>
 #include <sys/time.h>
@@ -10,6 +11,7 @@
 #include <boost/scope_exit.hpp>
 
 #include "common/admin_socket.h"
+#include "common/JSONFormatter.h"
 #include "common/ceph_context.h"
 #include "common/debug.h"
 #include "common/errno.h"
@@ -194,6 +196,7 @@ PeerReplayer::PeerReplayer(CephContext *cct, FSMirror *fs_mirror,
     m_fs_mirror(fs_mirror),
     m_local_cluster(local_cluster),
     m_local_ioctx(local_ioctx),
+    m_local_instance_id(stringify(local_cluster->get_instance_id())),
     m_filesystem(filesystem),
     m_peer(peer),
     m_directories(directories.begin(), directories.end()),
@@ -309,29 +312,32 @@ int PeerReplayer::init() {
     return r;
   }
 
-  std::scoped_lock locker(m_lock);
-  auto nr_replayers = g_ceph_context->_conf.get_val<uint64_t>(
-    "cephfs_mirror_max_concurrent_directory_syncs");
-  dout(20) << ": spawning " << nr_replayers << " snapshot replayer(s)" << dendl;
+  {
+    std::scoped_lock locker(m_lock);
+    auto nr_replayers = g_ceph_context->_conf.get_val<uint64_t>(
+      "cephfs_mirror_max_concurrent_directory_syncs");
+    dout(20) << ": spawning " << nr_replayers << " snapshot replayer(s)" << dendl;
 
-  while (nr_replayers-- > 0) {
-    std::unique_ptr<SnapshotReplayerThread> replayer(
-      new SnapshotReplayerThread(this));
-    std::string name("replayer-" + stringify(nr_replayers));
-    replayer->create(name.c_str());
-    m_replayers.push_back(std::move(replayer));
-  }
+    while (nr_replayers-- > 0) {
+      std::unique_ptr<SnapshotReplayerThread> replayer(
+        new SnapshotReplayerThread(this));
+      std::string name("replayer-" + stringify(nr_replayers));
+      replayer->create(name.c_str());
+      m_replayers.push_back(std::move(replayer));
+    }
 
-  auto nr_data_replayers = g_ceph_context->_conf.get_val<uint64_t>(
-    "cephfs_mirror_max_datasync_threads");
-  dout(20) << ": spawning " << nr_data_replayers << " snapshot data replayer(s)" << dendl;
-  while (nr_data_replayers-- > 0) {
-    std::unique_ptr<SnapshotDataSyncThread> data_replayer(
-      new SnapshotDataSyncThread(this));
-    std::string name("d_replayer-" + stringify(nr_data_replayers));
-    data_replayer->create(name.c_str());
-    m_data_replayers.push_back(std::move(data_replayer));
+    auto nr_data_replayers = g_ceph_context->_conf.get_val<uint64_t>(
+      "cephfs_mirror_max_datasync_threads");
+    dout(20) << ": spawning " << nr_data_replayers << " snapshot data replayer(s)" << dendl;
+    while (nr_data_replayers-- > 0) {
+      std::unique_ptr<SnapshotDataSyncThread> data_replayer(
+        new SnapshotDataSyncThread(this));
+      std::string name("d_replayer-" + stringify(nr_data_replayers));
+      data_replayer->create(name.c_str());
+      m_data_replayers.push_back(std::move(data_replayer));
+    }
   }
+  publish_directory_metrics_to_service_daemon();
   return 0;
 }
 
@@ -2540,6 +2546,10 @@ void PeerReplayer::run(SnapshotReplayerThread *replayer) {
 
     locker.lock();
 
+    locker.unlock();
+    publish_directory_metrics_to_service_daemon();
+    locker.lock();
+
     auto now = clock::now();
     std::chrono::duration<double> timo = now - last_directory_scan;
     if (timo.count() >= scan_interval && m_directories.size()) {
@@ -2847,7 +2857,7 @@ std::string PeerReplayer::format_bytes(double bytes) {
   return out.str();
 };
 
-double PeerReplayer::compute_eta(PeerReplayer::SnapSyncStat& sync_stat) {
+double PeerReplayer::compute_eta(const PeerReplayer::SnapSyncStat &sync_stat) {
   // mlock is held by the caller
 
   static constexpr uint64_t MIN_FILES_SAMPLE = 25;
@@ -2903,6 +2913,82 @@ double PeerReplayer::compute_eta(PeerReplayer::SnapSyncStat& sync_stat) {
       return -1.0; //Calculating
     return remaining / effective_bw;
   }
+}
+
+json_spirit::mObject PeerReplayer::build_peer_sync_active_snap_section_nolock(
+    const SnapSyncStat &sync_stat) const {
+  json_spirit::mObject cur;
+  cur["id"] = json_spirit::mValue(
+    static_cast<boost::uint64_t>((*sync_stat.current_syncing_snap).first));
+  cur["name"] = json_spirit::mValue((*sync_stat.current_syncing_snap).second);
+  cur["sync-mode"] = json_spirit::mValue(sync_stat.snapdiff ? "delta" : "full");
+
+  double read_bps = sync_stat.read_time_sec > 0 ?
+      sync_stat.bytes_read / sync_stat.read_time_sec : 0;
+  double write_bps = sync_stat.write_time_sec > 0 ?
+      sync_stat.bytes_written / sync_stat.write_time_sec : 0;
+  cur["avg_read_throughput_bytes"] = json_spirit::mValue(format_bytes(read_bps) + "/s");
+  cur["avg_write_throughput_bytes"] = json_spirit::mValue(format_bytes(write_bps) + "/s");
+
+  json_spirit::mObject crawl;
+  if (sync_stat.crawl_finished) {
+    crawl["state"] = json_spirit::mValue("completed");
+    crawl["duration"] = json_spirit::mValue(format_time(sync_stat.crawl_duration));
+  } else {
+    auto cur_time = clock::now();
+    sec_duration crawl_duration_till_now = sec_duration(cur_time - sync_stat.crawl_start_time);
+    crawl["state"] = json_spirit::mValue("in-progress");
+    crawl["duration"] = json_spirit::mValue(format_time(crawl_duration_till_now.count()));
+  }
+  cur["crawl"] = json_spirit::mValue(crawl);
+
+  if (sync_stat.datasync_queue_wait_duration ||
+      sync_stat.datasync_queue_wait_start_time) {
+    json_spirit::mObject dq_wait;
+    if (sync_stat.datasync_queue_wait_duration) {
+      dq_wait["state"] = json_spirit::mValue("complete");
+      dq_wait["duration"] = json_spirit::mValue(
+          format_time(*sync_stat.datasync_queue_wait_duration));
+    } else {
+      auto cur_time = clock::now();
+      sec_duration pending_wait = sec_duration(
+          cur_time - *sync_stat.datasync_queue_wait_start_time);
+      dq_wait["state"] = json_spirit::mValue("waiting");
+      dq_wait["duration"] = json_spirit::mValue(format_time(pending_wait.count()));
+    }
+    cur["datasync_queue_wait"] = json_spirit::mValue(dq_wait);
+  }
+
+  json_spirit::mObject bytes;
+  bytes["sync_bytes"] = json_spirit::mValue(format_bytes(sync_stat.sync_bytes));
+  bytes["total_bytes"] = json_spirit::mValue(format_bytes(sync_stat.total_bytes));
+  if (sync_stat.total_bytes > 0) {
+    double sync_pct = (static_cast<double>(sync_stat.sync_bytes) * 100.0) / sync_stat.total_bytes;
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(2) << sync_pct << "%";
+    bytes["sync_percent"] = json_spirit::mValue(os.str());
+  }
+  cur["bytes"] = json_spirit::mValue(bytes);
+
+  json_spirit::mObject files;
+  files["sync_files"] = json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.sync_files));
+  files["total_files"] = json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.total_files));
+  if (sync_stat.total_files > 0) {
+    double sync_file_pct =
+        (static_cast<double>(sync_stat.sync_files) * 100.0) / sync_stat.total_files;
+    std::ostringstream os;
+    os << std::fixed << std::setprecision(2) << sync_file_pct << "%";
+    files["sync_percent"] = json_spirit::mValue(os.str());
+  }
+  cur["files"] = json_spirit::mValue(files);
+
+  double eta = compute_eta(sync_stat);
+  if (eta == -1.0) {
+    cur["eta"] = json_spirit::mValue("calculating...");
+  } else {
+    cur["eta"] = json_spirit::mValue(format_time(eta));
+  }
+  return cur;
 }
 
 void PeerReplayer::peer_status(Formatter *f) {
@@ -3019,6 +3105,45 @@ void PeerReplayer::peer_status(Formatter *f) {
     f->close_section(); // dir_root
   }
   f->close_section(); // stats
+}
+
+void PeerReplayer::publish_directory_metrics_to_service_daemon() {
+  json_spirit::mObject metrics_obj;
+  {
+    std::scoped_lock locker(m_lock);
+    // sparse push: only directories currently owned by this replayer
+    json_spirit::mObject stats_obj;
+    for (auto &[dir_root, _registry] : m_registered) {
+      auto st_it = m_snap_sync_stats.find(dir_root);
+      if (st_it == m_snap_sync_stats.end()) {
+        continue;
+      }
+      auto &sync_stat = st_it->second;
+      json_spirit::mObject dir_obj;
+      if (sync_stat.current_syncing_snap) {
+        dir_obj["state"] = json_spirit::mValue("syncing");
+        dir_obj["current_syncing_snap"] = json_spirit::mValue(
+            build_peer_sync_active_snap_section_nolock(sync_stat));
+      } else if (sync_stat.failed) {
+        dir_obj["state"] = json_spirit::mValue("failed");
+        if (sync_stat.last_failed_reason) {
+          dir_obj["failure_reason"] = json_spirit::mValue(*sync_stat.last_failed_reason);
+        }
+      } else {
+        dir_obj["state"] = json_spirit::mValue("idle");
+      }
+      stats_obj[dir_root] = json_spirit::mValue(dir_obj);
+    }
+    metrics_obj["daemon_instance_id"] = json_spirit::mValue(m_local_instance_id);
+    metrics_obj["stats"] = json_spirit::mValue(stats_obj);
+  }
+
+  if (m_service_daemon) {
+    m_service_daemon->add_or_update_peer_attribute(
+      m_filesystem.fscid, m_peer,
+      SERVICE_DAEMON_DIRECTORY_METRICS_KEY,
+      std::move(metrics_obj));
+  }
 }
 
 void PeerReplayer::reopen_logs() {

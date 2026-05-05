@@ -9,6 +9,7 @@
 #include <string_view>
 #include <variant>
 
+#include "json_spirit/json_spirit.h"
 #include "include/rados/librados.hpp"
 #include "include/cephfs/libcephfs.h"
 #include "mds/mdstypes.h"
@@ -18,7 +19,7 @@ namespace mirror {
 
 static const std::string CEPHFS_MIRROR_OBJECT("cephfs_mirror");
 
-typedef std::variant<bool, uint64_t, std::string> AttributeValue;
+typedef std::variant<bool, uint64_t, std::string, json_spirit::mObject> AttributeValue;
 typedef std::map<std::string, AttributeValue> Attributes;
 
 // distinct filesystem identifier

@@ -24,7 +24,7 @@ public:
   PeerReplayer(CephContext *cct, FSMirror *fs_mirror,
                RadosRef local_cluster, const Filesystem &filesystem,
                const Peer &peer, const std::set<std::string, std::less<>> &directories,
-               MountRef mount, ServiceDaemon *service_daemon);
+               IoCtxRef local_ioctx, MountRef mount, ServiceDaemon *service_daemon);
   ~PeerReplayer();
 
   // initialize replayer for a peer
@@ -50,6 +50,7 @@ private:
 
   inline static const std::string SERVICE_DAEMON_FAILED_DIR_COUNT_KEY = "failure_count";
   inline static const std::string SERVICE_DAEMON_RECOVERED_DIR_COUNT_KEY = "recovery_count";
+  inline static const std::string PEER_SYNC_STAT_KEY_PREFIX = "sync_stat";
 
   using Snapshot = std::pair<std::string, uint64_t>;
 
@@ -616,6 +617,7 @@ private:
   CephContext *m_cct;
   FSMirror *m_fs_mirror;
   RadosRef m_local_cluster;
+  IoCtxRef m_local_ioctx;
   Filesystem m_filesystem;
   Peer m_peer;
   // probably need to be encapsulated when supporting cancelations
@@ -667,6 +669,9 @@ private:
                          DirRegistry *registry);
   void unlock_directory(const std::string &dir_root, const DirRegistry &registry);
   int sync_snaps(const std::string &dir_root, std::unique_lock<ceph::mutex> &locker);
+  void load_persisted_dir_sync_stat(const std::string &dir_root);
+  void persist_dir_sync_stat(const std::string &dir_root);
+  std::string peer_sync_stat_omap_key(std::string_view dir_root) const;
 
 
   int build_snap_map(const std::string &dir_root, std::map<uint64_t, std::string> *snap_map,

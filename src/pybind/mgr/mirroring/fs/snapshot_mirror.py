@@ -252,28 +252,11 @@ def _parse_directory_metrics_sparse(peer_stats: Dict[str, Any]) -> Tuple[str, Di
     return did, ordered_stats
 
 
-def _mark_stale_pushed_metrics(metrics: Dict[str, Any], daemon_key: str,
-                               active_daemon_keys: set) -> Dict[str, Any]:
-    if metrics.get('state') != 'syncing':
-        return metrics
-    if daemon_key not in active_daemon_keys:
-        stale = metrics.copy()
-        stale['state'] = 'stale'
-        stale['stale'] = True
-        stale['stale_reason'] = 'cephfs-mirror daemon no longer active'
-        stale['daemon_key'] = daemon_key
-        return stale
-    return metrics
-
-
 def _merge_durable_with_sparse(base: Dict[str, Any],
-                               overlays: List[Dict[str, Any]],
-                               active_daemon_keys: set) -> Dict[str, Any]:
+                               overlays: List[Dict[str, Any]]) -> Dict[str, Any]:
     out: Dict[str, Any] = {}
     # live/in-progress view first (asok-like)
-    for ent in overlays:
-        adj = _mark_stale_pushed_metrics(ent['metrics'], ent['daemon_key'],
-                                         active_daemon_keys)
+    for adj in overlays:
         for k, v in adj.items():
             out[k] = v
     # append durable tail fields that are not part of live overlay
@@ -318,18 +301,14 @@ def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
 
 
 def _collect_sparse_push_by_path(
-        mgr, filesystem: str) -> Tuple[Dict[str, List[Dict[str, Any]]], set]:
-    """Per path, list of {daemon_key, metrics} from in-progress daemon pushes."""
+        mgr, filesystem: str) -> Dict[str, List[Dict[str, Any]]]:
+    """Per path, list of sparse metric dicts from current cephfs-mirror daemons."""
     by_path: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     sm = mgr.get('service_map') or {}
     daemon_entry = sm['services'].get('cephfs-mirror', None)
-    active = set()
-    if daemon_entry:
-        active = set(str(d) for d in daemon_entry.get('daemons', []))
     if not daemon_entry:
-        return by_path, active
+        return by_path
     for daemon_key in daemon_entry.get('daemons', []):
-        dk = str(daemon_key)
         daemon_status = mgr.get_daemon_status('cephfs-mirror', daemon_key)
         logging.debug(f"daemon_status - {daemon_status}")
         if not daemon_status:
@@ -363,20 +342,20 @@ def _collect_sparse_push_by_path(
                             if not norm_path.startswith('/'):
                                 norm_path = '/' + norm_path
                             norm_path = os.path.normpath(norm_path)
-                        by_path[norm_path].append({'daemon_key': dk, 'metrics': data})
-    return by_path, active
+                        by_path[norm_path].append(data)
+    return by_path
 
 
 def _merge_directory_metrics_uncached(mgr, filesystem: str) -> Dict[str, Any]:
     """Merge durable sync_stat omap with sparse in-progress pushes from mirror daemons."""
     durable = _load_durable_by_path(mgr, filesystem)
-    sparse, active = _collect_sparse_push_by_path(mgr, filesystem)
+    sparse = _collect_sparse_push_by_path(mgr, filesystem)
     merged: Dict[str, Any] = {}
     all_paths = set(durable) | set(sparse)
     for path in all_paths:
         base = _ensure_snap_counters(_strip_internal_metrics(durable.get(path, {})))
         if path in sparse:
-            merged[path] = _merge_durable_with_sparse(base, sparse[path], active)
+            merged[path] = _merge_durable_with_sparse(base, sparse[path])
         else:
             merged[path] = _reorder_directory_metrics(base)
     return merged

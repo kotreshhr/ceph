@@ -36,6 +36,8 @@ CEPHFS_IMAGE_POLICY_UPDATE_THROTTLE_INTERVAL = 1
 SYNC_STAT_KEY_PREFIX = 'sync_stat'
 MAX_OMAP_RETURN = 256
 METRICS_CACHE_TTL_SEC = 2.0
+# Composite metrics dict key: peer_uuid + SEP + normalized directory path (peer from omap / daemon).
+_METRICS_ROW_KEY_SEP = '\0'
 
 
 def _format_time(total_seconds: float) -> str:
@@ -96,8 +98,8 @@ def _omap_scan_prefix(ioctx, prefix: str):
             start = batch.popitem()[0]
 
 
-def _dir_path_from_sync_stat_key(prefix: str, key: str) -> Optional[str]:
-    """Map omap key to absolute mirrored directory path.
+def _peer_uuid_and_dir_from_sync_stat_key(prefix: str, key: str) -> Optional[Tuple[str, str]]:
+    """Parse omap key into (peer_uuid, normalized absolute directory path).
 
     Keys are sync_stat/<fs_name>/<peer_uuid>/<path_without_leading_slash>,
     where <path_without_leading_slash> is the full nested path (e.g. d1/d2/dir).
@@ -108,11 +110,25 @@ def _dir_path_from_sync_stat_key(prefix: str, key: str) -> Optional[str]:
     parts = suffix.split('/', 1)
     if len(parts) != 2:
         return None
-    dir_suffix = parts[1]
+    peer_uuid, dir_suffix = parts[0], parts[1]
     if not dir_suffix:
-        return '/'
-    p = '/' + dir_suffix
-    return os.path.normpath(p)
+        norm_path = '/'
+    else:
+        norm_path = os.path.normpath('/' + dir_suffix)
+    return peer_uuid, norm_path
+
+
+def _metrics_row_key(peer_uuid: str, dir_path: str) -> str:
+    return f'{peer_uuid}{_METRICS_ROW_KEY_SEP}{dir_path}'
+
+
+def _split_metrics_row_key(row_key: str) -> Tuple[str, str]:
+    """Inverse of _metrics_row_key; legacy keys with no separator are ( '', row_key )."""
+    s = str(row_key)
+    if _METRICS_ROW_KEY_SEP in s:
+        peer, _, path = s.partition(_METRICS_ROW_KEY_SEP)
+        return peer, path
+    return '', s
 
 
 def _metrics_from_sync_stat_json(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -267,9 +283,10 @@ def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
         return out
     try:
         for key, raw_val in _omap_scan_prefix(ioctx, prefix):
-            dir_path = _dir_path_from_sync_stat_key(prefix, key)
-            if dir_path is None:
+            parsed = _peer_uuid_and_dir_from_sync_stat_key(prefix, key)
+            if parsed is None:
                 continue
+            peer_uuid, dir_path = parsed
             try:
                 obj = json.loads(raw_val.decode('utf-8'))
             except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
@@ -277,13 +294,8 @@ def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
             if not isinstance(obj, dict):
                 continue
             cur = _metrics_from_sync_stat_json(obj)
-            if dir_path in out:
-                log.warning(
-                    'duplicate sync_stat omap entries for directory %s '
-                    '(expected at most one per mirror peer); keeping first',
-                    dir_path)
-                continue
-            out[dir_path] = cur
+            ck = _metrics_row_key(peer_uuid, dir_path)
+            out[ck] = cur
     except rados.Error as e:
         log.error(f'failed omap read sync_stat for {filesystem}: {e}')
     finally:
@@ -293,12 +305,12 @@ def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
 
 def _collect_sparse_push_by_path(
         mgr, filesystem: str) -> Dict[str, List[Dict[str, Any]]]:
-    """Per path, list of sparse metric dicts from current cephfs-mirror daemons."""
-    by_path: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    """Per composite row key, list of sparse metric dicts from current cephfs-mirror daemons."""
+    by_key: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     sm = mgr.get('service_map') or {}
     daemon_entry = sm['services'].get('cephfs-mirror', None)
     if not daemon_entry:
-        return by_path
+        return by_key
     for daemon_key in daemon_entry.get('daemons', []):
         daemon_status = mgr.get_daemon_status('cephfs-mirror', daemon_key)
         logging.debug(f"daemon_status - {daemon_status}")
@@ -322,7 +334,8 @@ def _collect_sparse_push_by_path(
         for fs_desc in fs_descs:
             if fs_desc.get('name') != filesystem:
                 continue
-            for _peer_uuid, peer_desc in fs_desc.get('peers', {}).items():
+            for peer_uuid, peer_desc in fs_desc.get('peers', {}).items():
+                pu = str(peer_uuid)
                 _, stats = _parse_directory_metrics_sparse(peer_desc.get('stats', {}))
                 if not stats:
                     continue
@@ -333,8 +346,9 @@ def _collect_sparse_push_by_path(
                             if not norm_path.startswith('/'):
                                 norm_path = '/' + norm_path
                             norm_path = os.path.normpath(norm_path)
-                        by_path[norm_path].append(data)
-    return by_path
+                        ck = _metrics_row_key(pu, norm_path)
+                        by_key[ck].append(data)
+    return by_key
 
 
 def _merge_directory_metrics_uncached(mgr, filesystem: str) -> Dict[str, Any]:
@@ -342,13 +356,13 @@ def _merge_directory_metrics_uncached(mgr, filesystem: str) -> Dict[str, Any]:
     durable = _load_durable_by_path(mgr, filesystem)
     sparse = _collect_sparse_push_by_path(mgr, filesystem)
     merged: Dict[str, Any] = {}
-    all_paths = set(durable) | set(sparse)
-    for path in all_paths:
-        base = _ensure_snap_counters(dict(durable.get(path, {})))
-        if path in sparse:
-            merged[path] = _merge_durable_with_sparse(base, sparse[path])
+    all_keys = set(durable) | set(sparse)
+    for ck in all_keys:
+        base = _ensure_snap_counters(dict(durable.get(ck, {})))
+        if ck in sparse:
+            merged[ck] = _merge_durable_with_sparse(base, sparse[ck])
         else:
-            merged[path] = _reorder_directory_metrics(base)
+            merged[ck] = _reorder_directory_metrics(base)
     return merged
 
 class FSPolicy:
@@ -1104,9 +1118,14 @@ class FSSnapshotMirror:
             return me.args[0], '', me.args[1]
 
     def metrics_status(self, filesystem: str,
-                       mirrored_dir_path: Optional[str] = None):
+                       mirrored_dir_path: Optional[str] = None,
+                       peer_uuid: Optional[str] = None):
         """Return per-directory mirror metrics (sync_stat omap + sparse daemon push)."""
         try:
+            if peer_uuid is not None and mirrored_dir_path is None:
+                raise MirrorException(
+                    -errno.EINVAL,
+                    'peer_uuid requires mirrored_dir_path')
             with self.lock:
                 if not self.filesystem_exist(filesystem):
                     raise MirrorException(-errno.ENOENT,
@@ -1117,18 +1136,36 @@ class FSSnapshotMirror:
                                           f'filesystem {filesystem} is not mirrored')
                 tracked_dirs = list(fspolicy.policy.dir_states.keys())
             metrics = self.merged_directory_metrics(filesystem)
-            for path in tracked_dirs:
-                m = metrics.setdefault(path, {})
-                m.setdefault('state', 'idle')
-                m.setdefault('snaps_synced', 0)
-                m.setdefault('snaps_deleted', 0)
-                m.setdefault('snaps_renamed', 0)
+            for td in tracked_dirs:
+                td_norm = FSSnapshotMirror.norm_path(td)
+                matching = [k for k in metrics if _split_metrics_row_key(k)[1] == td_norm]
+                if not matching:
+                    metrics.setdefault(_metrics_row_key('', td_norm), {})
+                    matching = [_metrics_row_key('', td_norm)]
+                for k in matching:
+                    m = metrics[k]
+                    m.setdefault('state', 'idle')
+                    m.setdefault('snaps_synced', 0)
+                    m.setdefault('snaps_deleted', 0)
+                    m.setdefault('snaps_renamed', 0)
             if mirrored_dir_path is not None:
                 path = FSSnapshotMirror.norm_path(mirrored_dir_path)
-                if path not in metrics:
+                if peer_uuid is not None:
+                    pu = str(peer_uuid).strip()
+                    ck = _metrics_row_key(pu, path)
+                    if ck not in metrics:
+                        raise MirrorException(
+                            -errno.ENOENT,
+                            f'no mirror metrics for peer {pu} directory {path}')
+                    return 0, json.dumps({ck: metrics[ck]}), ''
+                subset = {
+                    k: v for k, v in metrics.items()
+                    if _split_metrics_row_key(k)[1] == path
+                }
+                if not subset:
                     raise MirrorException(-errno.ENOENT,
                                           f'no mirror metrics for directory {path}')
-                return 0, json.dumps({path: metrics[path]}), ''
+                return 0, json.dumps(subset), ''
             return 0, json.dumps(metrics), ''
         except MirrorException as me:
             return me.args[0], '', me.args[1]

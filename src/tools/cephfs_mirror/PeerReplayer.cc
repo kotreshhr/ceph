@@ -417,7 +417,9 @@ void PeerReplayer::remove_directory(string_view dir_root) {
 }
 
 std::string PeerReplayer::peer_sync_stat_omap_key(std::string_view dir_root) const {
-  // dir_root is usually absolute (e.g. "/d0"); avoid ".../uuid//d0" from an extra slash.
+  // Key shape: sync_stat/<fs_name>/<peer_uuid>/<mirrored_dir_path>
+  // <mirrored_dir_path> is the full path from the filesystem root with leading
+  // slashes removed (e.g. "/d0/a" -> "d0/a") so nested directories are preserved.
   std::string d(dir_root);
   while (!d.empty() && d.front() == '/') {
     d.erase(0, 1);

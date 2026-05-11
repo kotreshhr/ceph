@@ -97,6 +97,11 @@ def _omap_scan_prefix(ioctx, prefix: str):
 
 
 def _dir_path_from_sync_stat_key(prefix: str, key: str) -> Optional[str]:
+    """Map omap key to absolute mirrored directory path.
+
+    Keys are sync_stat/<fs_name>/<peer_uuid>/<path_without_leading_slash>,
+    where <path_without_leading_slash> is the full nested path (e.g. d1/d2/dir).
+    """
     if not key.startswith(prefix):
         return None
     suffix = key[len(prefix):]
@@ -104,14 +109,15 @@ def _dir_path_from_sync_stat_key(prefix: str, key: str) -> Optional[str]:
     if len(parts) != 2:
         return None
     dir_suffix = parts[1]
-    return '/' + dir_suffix if dir_suffix else '/'
+    if not dir_suffix:
+        return '/'
+    p = '/' + dir_suffix
+    return os.path.normpath(p)
 
 
 def _metrics_from_sync_stat_json(obj: Dict[str, Any]) -> Dict[str, Any]:
     """Map sync_stat omap JSON to directory_metrics-like dict (durable / completion fields)."""
     out: Dict[str, Any] = {'state': 'idle'}
-    if 'last_synced_time' in obj:
-        out['__last_synced_mono'] = float(obj['last_synced_time'])
     if 'last_synced_snap_id' in obj and 'last_synced_snap_name' in obj:
         ls: Dict[str, Any] = {
             'id': int(obj['last_synced_snap_id']),
@@ -135,24 +141,6 @@ def _metrics_from_sync_stat_json(obj: Dict[str, Any]) -> Dict[str, Any]:
     out['snaps_deleted'] = int(obj.get('deleted_snap_count', 0))
     out['snaps_renamed'] = int(obj.get('renamed_snap_count', 0))
     return out
-
-
-def _pick_better_durable(a: Dict[str, Any], b: Dict[str, Any]) -> Dict[str, Any]:
-    ta = float(a.get('__last_synced_mono', -1.0))
-    tb = float(b.get('__last_synced_mono', -1.0))
-    if tb > ta:
-        return b
-    if tb < ta:
-        return a
-    if int(b.get('snaps_synced', 0)) > int(a.get('snaps_synced', 0)):
-        return b
-    if int(b.get('snaps_synced', 0)) < int(a.get('snaps_synced', 0)):
-        return a
-    return a
-
-
-def _strip_internal_metrics(m: Dict[str, Any]) -> Dict[str, Any]:
-    return {k: v for k, v in m.items() if not str(k).startswith('__')}
 
 
 def _ensure_snap_counters(metrics: Dict[str, Any]) -> Dict[str, Any]:
@@ -290,9 +278,12 @@ def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
                 continue
             cur = _metrics_from_sync_stat_json(obj)
             if dir_path in out:
-                out[dir_path] = _pick_better_durable(out[dir_path], cur)
-            else:
-                out[dir_path] = cur
+                log.warning(
+                    'duplicate sync_stat omap entries for directory %s '
+                    '(expected at most one per mirror peer); keeping first',
+                    dir_path)
+                continue
+            out[dir_path] = cur
     except rados.Error as e:
         log.error(f'failed omap read sync_stat for {filesystem}: {e}')
     finally:
@@ -353,7 +344,7 @@ def _merge_directory_metrics_uncached(mgr, filesystem: str) -> Dict[str, Any]:
     merged: Dict[str, Any] = {}
     all_paths = set(durable) | set(sparse)
     for path in all_paths:
-        base = _ensure_snap_counters(_strip_internal_metrics(durable.get(path, {})))
+        base = _ensure_snap_counters(dict(durable.get(path, {})))
         if path in sparse:
             merged[path] = _merge_durable_with_sparse(base, sparse[path])
         else:

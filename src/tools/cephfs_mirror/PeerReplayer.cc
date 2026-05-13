@@ -3135,7 +3135,8 @@ void PeerReplayer::publish_directory_metrics_to_service_daemon() {
       } else {
         dir_obj["state"] = json_spirit::mValue("idle");
       }
-      stats_obj[dir_root] = json_spirit::mValue(dir_obj);
+      const std::string stats_key = stringify(m_peer.uuid) + dir_root;
+      stats_obj[stats_key] = json_spirit::mValue(dir_obj);
     }
     metrics_obj["daemon_instance_id"] = json_spirit::mValue(m_local_instance_id);
     metrics_obj["stats"] = json_spirit::mValue(stats_obj);

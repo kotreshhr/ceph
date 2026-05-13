@@ -36,8 +36,6 @@ CEPHFS_IMAGE_POLICY_UPDATE_THROTTLE_INTERVAL = 1
 SYNC_STAT_KEY_PREFIX = 'sync_stat'
 MAX_OMAP_RETURN = 256
 METRICS_CACHE_TTL_SEC = 2.0
-# Composite metrics dict key: peer_uuid + SEP + normalized directory path (peer from omap / daemon).
-_METRICS_ROW_KEY_SEP = '\0'
 
 
 def _format_time(total_seconds: float) -> str:
@@ -119,16 +117,19 @@ def _peer_uuid_and_dir_from_sync_stat_key(prefix: str, key: str) -> Optional[Tup
 
 
 def _metrics_row_key(peer_uuid: str, dir_path: str) -> str:
-    return f'{peer_uuid}{_METRICS_ROW_KEY_SEP}{dir_path}'
+    """Composite metrics key: peer uuid + absolute dir path (omap + mirror daemon)."""
+    return f'{peer_uuid}{dir_path}'
 
 
 def _split_metrics_row_key(row_key: str) -> Tuple[str, str]:
-    """Inverse of _metrics_row_key; legacy keys with no separator are ( '', row_key )."""
+    """Split composite key into (peer_uuid, absolute_dir_path)."""
     s = str(row_key)
-    if _METRICS_ROW_KEY_SEP in s:
-        peer, _, path = s.partition(_METRICS_ROW_KEY_SEP)
-        return peer, path
-    return '', s
+    if s.startswith('/'):
+        return '', s
+    slash = s.find('/')
+    if slash <= 0:
+        return '', s
+    return s[:slash], s[slash:]
 
 
 def _metrics_from_sync_stat_json(obj: Dict[str, Any]) -> Dict[str, Any]:
@@ -305,7 +306,7 @@ def _load_durable_by_path(mgr, filesystem: str) -> Dict[str, Any]:
 
 def _collect_sparse_push_by_path(
         mgr, filesystem: str) -> Dict[str, List[Dict[str, Any]]]:
-    """Per composite row key, list of sparse metric dicts from current cephfs-mirror daemons."""
+    """Per composite row key (peer_uuid + absolute path), sparse rows from mirror daemons."""
     by_key: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     sm = mgr.get('service_map') or {}
     daemon_entry = sm['services'].get('cephfs-mirror', None)
@@ -334,19 +335,12 @@ def _collect_sparse_push_by_path(
         for fs_desc in fs_descs:
             if fs_desc.get('name') != filesystem:
                 continue
-            for peer_uuid, peer_desc in fs_desc.get('peers', {}).items():
-                pu = str(peer_uuid)
+            for _peer_uuid, peer_desc in fs_desc.get('peers', {}).items():
                 _, stats = _parse_directory_metrics_sparse(peer_desc.get('stats', {}))
                 if not stats:
                     continue
-                for path, data in stats.items():
+                for ck, data in stats.items():
                     if isinstance(data, dict):
-                        norm_path = path
-                        if isinstance(norm_path, str):
-                            if not norm_path.startswith('/'):
-                                norm_path = '/' + norm_path
-                            norm_path = os.path.normpath(norm_path)
-                        ck = _metrics_row_key(pu, norm_path)
                         by_key[ck].append(data)
     return by_key
 

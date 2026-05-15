@@ -493,6 +493,98 @@ void PeerReplayer::load_persisted_dir_sync_stat(const std::string &dir_root) {
   }
 }
 
+void PeerReplayer::add_live_sync_metrics_to_persist(json_spirit::mObject &obj,
+                                                    SnapSyncStat &sync_stat) {
+  if (sync_stat.current_syncing_snap) {
+    json_spirit::mObject snap;
+    snap["id"] =
+      json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.current_syncing_snap->first));
+    snap["name"] = json_spirit::mValue(sync_stat.current_syncing_snap->second);
+    snap["sync-mode"] = json_spirit::mValue(sync_stat.snapdiff ? "delta" : "full");
+
+    double read_bps = sync_stat.read_time_sec > 0 ?
+        sync_stat.bytes_read / sync_stat.read_time_sec : 0;
+    double write_bps = sync_stat.write_time_sec > 0 ?
+        sync_stat.bytes_written / sync_stat.write_time_sec : 0;
+    snap["avg_read_throughput_bytes"] =
+      json_spirit::mValue(format_bytes(read_bps) + "/s");
+    snap["avg_write_throughput_bytes"] =
+      json_spirit::mValue(format_bytes(write_bps) + "/s");
+
+    json_spirit::mObject crawl;
+    if (sync_stat.crawl_finished) {
+      crawl["state"] = json_spirit::mValue("completed");
+      crawl["duration"] = json_spirit::mValue(format_time(sync_stat.crawl_duration));
+    } else {
+      crawl["state"] = json_spirit::mValue("in-progress");
+      auto cur_time = clock::now();
+      sec_duration crawl_duration_till_now =
+        sec_duration(cur_time - sync_stat.crawl_start_time);
+      crawl["duration"] =
+        json_spirit::mValue(format_time(crawl_duration_till_now.count()));
+    }
+    snap["crawl"] = json_spirit::mValue(crawl);
+
+    if (sync_stat.datasync_queue_wait_duration ||
+        sync_stat.datasync_queue_wait_start_time) {
+      json_spirit::mObject datasync_queue_wait;
+      if (sync_stat.datasync_queue_wait_duration) {
+        datasync_queue_wait["state"] = json_spirit::mValue("complete");
+        datasync_queue_wait["duration"] =
+          json_spirit::mValue(format_time(*sync_stat.datasync_queue_wait_duration));
+      } else {
+        datasync_queue_wait["state"] = json_spirit::mValue("waiting");
+        auto cur_time = clock::now();
+        sec_duration dq_wait =
+          sec_duration(cur_time - *sync_stat.datasync_queue_wait_start_time);
+        datasync_queue_wait["duration"] =
+          json_spirit::mValue(format_time(dq_wait.count()));
+      }
+      snap["datasync_queue_wait"] = json_spirit::mValue(datasync_queue_wait);
+    }
+
+    json_spirit::mObject bytes;
+    bytes["sync_bytes"] = json_spirit::mValue(format_bytes(sync_stat.sync_bytes));
+    bytes["total_bytes"] = json_spirit::mValue(format_bytes(sync_stat.total_bytes));
+    if (sync_stat.total_bytes > 0) {
+      double sync_pct =
+        (static_cast<double>(sync_stat.sync_bytes) * 100.0) / sync_stat.total_bytes;
+      std::ostringstream os;
+      os << std::fixed << std::setprecision(2) << sync_pct << "%";
+      bytes["sync_percent"] = json_spirit::mValue(os.str());
+    }
+    snap["bytes"] = json_spirit::mValue(bytes);
+
+    json_spirit::mObject files;
+    files["sync_files"] =
+      json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.sync_files));
+    files["total_files"] =
+      json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.total_files));
+    if (sync_stat.total_files > 0) {
+      double sync_file_pct =
+        (static_cast<double>(sync_stat.sync_files) * 100.0) / sync_stat.total_files;
+      std::ostringstream os;
+      os << std::fixed << std::setprecision(2) << sync_file_pct << "%";
+      files["sync_percent"] = json_spirit::mValue(os.str());
+    }
+    snap["files"] = json_spirit::mValue(files);
+
+    double eta = compute_eta(sync_stat);
+    if (eta == -1.0) {
+      snap["eta"] = json_spirit::mValue("calculating...");
+    } else {
+      snap["eta"] = json_spirit::mValue(format_time(eta));
+    }
+
+    obj["state"] = json_spirit::mValue("syncing");
+    obj["current_syncing_snap"] = json_spirit::mValue(snap);
+  } else if (sync_stat.failed) {
+    obj["state"] = json_spirit::mValue("failed");
+  } else {
+    obj["state"] = json_spirit::mValue("idle");
+  }
+}
+
 void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root) {
   if (!m_local_ioctx) {
     return;
@@ -509,6 +601,8 @@ void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root) {
   }
 
   json_spirit::mObject obj;
+  add_live_sync_metrics_to_persist(obj, sync_stat);
+
   if (sync_stat.last_synced_snap) {
     obj["last_synced_snap_id"] =
       json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.last_synced_snap->first));

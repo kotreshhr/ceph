@@ -2724,7 +2724,8 @@ void PeerReplayer::peer_status(Formatter *f) {
   std::scoped_lock locker(m_lock);
   f->open_object_section("stats");
   for (auto &[dir_root, sync_stat] : m_snap_sync_stats) {
-    f->open_object_section(dir_root);
+    const std::string stats_key = stringify(m_peer.uuid) + dir_root;
+    f->open_object_section(stats_key);
     if (sync_stat.failed) {
       f->dump_string("state", "failed");
       if (sync_stat.last_failed_reason) {
@@ -2831,7 +2832,7 @@ void PeerReplayer::peer_status(Formatter *f) {
     f->dump_unsigned("snaps_synced", sync_stat.synced_snap_count);
     f->dump_unsigned("snaps_deleted", sync_stat.deleted_snap_count);
     f->dump_unsigned("snaps_renamed", sync_stat.renamed_snap_count);
-    f->close_section(); // dir_root
+    f->close_section(); // stats_key
   }
   f->close_section(); // stats
 }

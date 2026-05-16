@@ -671,7 +671,8 @@ private:
   void unlock_directory(const std::string &dir_root, const DirRegistry &registry);
   int sync_snaps(const std::string &dir_root, std::unique_lock<ceph::mutex> &locker);
   void load_persisted_dir_sync_stat(const std::string &dir_root);
-  void persist_dir_sync_stat(const std::string &dir_root);
+  void persist_dir_sync_stat(const std::string &dir_root,
+                             bool use_aio_omap_set = false);
   void add_live_sync_metrics_to_persist(json_spirit::mObject &obj,
                                         SnapSyncStat &sync_stat);
   std::string peer_sync_stat_omap_key(std::string_view dir_root) const;

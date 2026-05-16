@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include <stack>
+#include <memory>
 #include <fcntl.h>
 #include <algorithm>
 #include <sys/time.h>
@@ -16,10 +17,12 @@
 #include "common/perf_counters.h"
 #include "common/perf_counters_collection.h"
 #include "common/perf_counters_key.h"
+#include "include/Context.h"
 #include "include/stringify.h"
 #include "FSMirror.h"
 #include "PeerReplayer.h"
 #include "Utils.h"
+#include "aio_utils.h"
 
 #include "json_spirit/json_spirit.h"
 
@@ -104,6 +107,20 @@ monotime monotime_from_double(double seconds) {
   auto d = std::chrono::duration_cast<clock::duration>(sec_duration(seconds));
   return monotime(d);
 }
+
+struct C_PersistSyncStatAio : Context {
+  std::string dir_root;
+
+  explicit C_PersistSyncStatAio(std::string dir_root_)
+    : dir_root(std::move(dir_root_)) {}
+
+  void finish(int r) override {
+    if (r < 0) {
+      generic_derr << "cephfs::mirror: aio persist sync stats failed for dir_root="
+                     << dir_root << ": " << cpp_strerror(r) << dendl;
+    }
+  }
+};
 
 class PeerAdminSocketCommand {
 public:
@@ -585,7 +602,8 @@ void PeerReplayer::add_live_sync_metrics_to_persist(json_spirit::mObject &obj,
   }
 }
 
-void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root) {
+void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root,
+                                         bool use_aio_omap_set) {
   if (!m_local_ioctx) {
     return;
   }
@@ -640,22 +658,27 @@ void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root) {
   bl.append(json_spirit::write(json_spirit::mValue(obj)));
   std::map<std::string, bufferlist> kvs{{peer_sync_stat_omap_key(dir_root), bl}};
 
-  int r = m_local_ioctx->omap_set(CEPHFS_MIRROR_OBJECT, kvs);
-  if (r == -ENOENT) {
-    librados::ObjectWriteOperation op;
-    op.create(false);
-    r = m_local_ioctx->operate(CEPHFS_MIRROR_OBJECT, &op);
+  if (use_aio_omap_set) {
+    librados::ObjectWriteOperation write_op;
+    write_op.omap_set(kvs);
+
+    Context *ctx = new C_PersistSyncStatAio(dir_root);
+    librados::AioCompletion *aio_comp = create_rados_callback(ctx);
+    int r = m_local_ioctx->aio_operate(CEPHFS_MIRROR_OBJECT, aio_comp, &write_op);
     if (r < 0) {
-      derr << ": failed to create mirror object for persisted sync stats: "
-           << cpp_strerror(r) << dendl;
+      delete ctx;
+      derr << ": failed to submit aio persist sync stats for dir_root=" << dir_root
+           << ": " << cpp_strerror(r) << dendl;
+      aio_comp->release();
       return;
     }
-    r = m_local_ioctx->omap_set(CEPHFS_MIRROR_OBJECT, kvs);
-  }
-
-  if (r < 0) {
-    derr << ": failed to persist sync stats for dir_root=" << dir_root
-         << ": " << cpp_strerror(r) << dendl;
+    aio_comp->release();
+  } else {
+    int r = m_local_ioctx->omap_set(CEPHFS_MIRROR_OBJECT, kvs);
+    if (r < 0) {
+      derr << ": failed to persist sync stats for dir_root=" << dir_root
+           << ": " << cpp_strerror(r) << dendl;
+    }
   }
 }
 

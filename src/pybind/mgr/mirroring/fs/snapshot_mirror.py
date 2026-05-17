@@ -19,7 +19,9 @@ from mgr_module import NotifyType
 from .blocklist import blocklist
 from .notify import Notifier, InstanceWatcher
 from .utils import INSTANCE_ID_PREFIX, MIRROR_OBJECT_NAME, Finisher, \
-    AsyncOpTracker, connect_to_filesystem, disconnect_from_filesystem
+    AsyncOpTracker, SYNC_STAT_KEY_PREFIX, connect_to_filesystem, \
+    disconnect_from_filesystem
+from .dir_map.load import MAX_RETURN
 from .exception import MirrorException
 from .dir_map.create import create_mirror_object
 from .dir_map.load import load_dir_map, load_instances
@@ -326,6 +328,26 @@ class FSSnapshotMirror:
     @staticmethod
     def peer_config_key(filesystem, peer_uuid):
         return f'{FSSnapshotMirror.PEER_CONFIG_KEY_PREFIX}/{filesystem}/{peer_uuid}'
+
+    @staticmethod
+    def sync_stat_omap_key(filesystem, peer_uuid, dir_path):
+        return (f'{SYNC_STAT_KEY_PREFIX}/{filesystem}/{peer_uuid}/'
+                f'{dir_path.lstrip("/")}')
+
+    @staticmethod
+    def sync_stat_metrics_output_key(peer_uuid, dir_path):
+        return f'{peer_uuid}{dir_path}'
+
+    @staticmethod
+    def parse_sync_stat_omap_key(key, filesystem):
+        prefix = f'{SYNC_STAT_KEY_PREFIX}/{filesystem}/'
+        if not key.startswith(prefix):
+            return None
+        suffix = key[len(prefix):]
+        peer_uuid, sep, dir_rel = suffix.partition('/')
+        if not peer_uuid or not sep:
+            return None
+        return peer_uuid, FSSnapshotMirror.norm_path('/' + dir_rel)
 
     def config_set(self, key, val=None):
         """set or remove a key from mon config store"""
@@ -764,9 +786,112 @@ class FSSnapshotMirror:
         except MirrorException as me:
             return me.args[0], '', me.args[1]
 
+    def _open_metadata_ioctx(self, filesystem):
+        metadata_pool_id = FSSnapshotMirror.get_metadata_pool(filesystem, self.fs_map)
+        if not metadata_pool_id:
+            raise MirrorException(-errno.EINVAL,
+                                  f'cannot find metadata pool for filesystem {filesystem}')
+        try:
+            return self.rados.open_ioctx2(metadata_pool_id)
+        except rados.Error as e:
+            log.error(f'failed to open metadata pool for {filesystem}: {e}')
+            raise Exception(-e.errno)
+
+    @staticmethod
+    def _decode_sync_stat_val(val):
+        return json.loads(val.decode('utf-8'))
+
+    def _read_sync_stat_by_keys(self, ioctx, keys):
+        stats = {}
+        if not keys:
+            return stats
+        with rados.ReadOpCtx() as read_op:
+            it, ret = ioctx.get_omap_vals_by_keys(read_op, keys)
+            if ret != 0:
+                log.error('failed to read sync stat omap keys')
+                raise Exception(-errno.EINVAL)
+            ioctx.operate_read_op(read_op, MIRROR_OBJECT_NAME)
+            for key, val in it:
+                try:
+                    stats[key] = self._decode_sync_stat_val(val)
+                except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                    log.warning(f'failed to decode sync stat for key {key}: {e}')
+        return stats
+
+    def _load_sync_stat_metrics(self, ioctx, filesystem, peer_uuid=None):
+        metrics = {}
+        prefix = f'{SYNC_STAT_KEY_PREFIX}/{filesystem}/'
+        if peer_uuid:
+            prefix += f'{peer_uuid}/'
+        with rados.ReadOpCtx() as read_op:
+            start = ""
+            while True:
+                it, ret = ioctx.get_omap_vals(read_op, start, prefix, MAX_RETURN)
+                if ret != 0:
+                    log.error('failed to read sync stat omap')
+                    raise Exception(-errno.EINVAL)
+                ioctx.operate_read_op(read_op, MIRROR_OBJECT_NAME)
+                omap_vals = dict(it)
+                if not omap_vals:
+                    break
+                for key, val in omap_vals.items():
+                    parsed = FSSnapshotMirror.parse_sync_stat_omap_key(key, filesystem)
+                    if not parsed:
+                        continue
+                    peer, dir_path = parsed
+                    if peer_uuid and peer != peer_uuid:
+                        continue
+                    try:
+                        stat = self._decode_sync_stat_val(val)
+                    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+                        log.warning(f'failed to decode sync stat for key {key}: {e}')
+                        continue
+                    out_key = FSSnapshotMirror.sync_stat_metrics_output_key(peer, dir_path)
+                    metrics[out_key] = stat
+                start = omap_vals.popitem()[0]
+        return metrics
+
     def metrics_status(self, filesystem, mirrored_dir_path, peer_uuid):
-        """Return cephfs mirror metrics as JSON"""
-        return 0, json.dumps({}), ''
+        """Return persisted mirror directory snapshot metrics as JSON"""
+        try:
+            with self.lock:
+                if not self.filesystem_exist(filesystem):
+                    raise MirrorException(-errno.ENOENT,
+                                          f'filesystem {filesystem} does not exist')
+                if not self.pool_policy.get(filesystem, None):
+                    raise MirrorException(-errno.EINVAL,
+                                          f'filesystem {filesystem} is not mirrored')
+                peers = self.get_filesystem_peers(filesystem)
+                if not peers:
+                    return 0, json.dumps({}), ''
+
+                if peer_uuid:
+                    if peer_uuid not in peers:
+                        raise MirrorException(-errno.ENOENT,
+                                              f'peer {peer_uuid} not found for '
+                                              f'filesystem {filesystem}')
+                    peers = {peer_uuid: peers[peer_uuid]}
+
+                ioctx = self._open_metadata_ioctx(filesystem)
+                if mirrored_dir_path:
+                    dir_path = FSSnapshotMirror.norm_path(mirrored_dir_path)
+                    keys = [FSSnapshotMirror.sync_stat_omap_key(filesystem, peer, dir_path)
+                            for peer in peers]
+                    omap_stats = self._read_sync_stat_by_keys(ioctx, keys)
+                    metrics = {}
+                    for peer in peers:
+                        omap_key = FSSnapshotMirror.sync_stat_omap_key(filesystem, peer,
+                                                                         dir_path)
+                        if omap_key in omap_stats:
+                            out_key = FSSnapshotMirror.sync_stat_metrics_output_key(
+                                peer, dir_path)
+                            metrics[out_key] = omap_stats[omap_key]
+                else:
+                    metrics = self._load_sync_stat_metrics(ioctx, filesystem, peer_uuid)
+
+                return 0, json.dumps(metrics, indent=4, sort_keys=True), ''
+        except MirrorException as me:
+            return me.args[0], '', me.args[1]
 
     def daemon_status(self, format='json'):
         try:

@@ -12,6 +12,7 @@ MIRROR_OBJECT_NAME = MIRROR_OBJECT_PREFIX
 
 INSTANCE_ID_PREFIX = "instance_"
 DIRECTORY_MAP_PREFIX = "dir_map_"
+SYNC_STAT_KEY_PREFIX = "sync_stat"
 
 log = logging.getLogger(__name__)
 

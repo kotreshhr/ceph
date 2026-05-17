@@ -786,6 +786,119 @@ class FSSnapshotMirror:
         except MirrorException as me:
             return me.args[0], '', me.args[1]
 
+    # Matches the format_time function used in peer_status
+    @staticmethod
+    def _format_time(total_seconds_d):
+        # Match PeerReplayer::format_time()
+        total_seconds = int(round(total_seconds_d))
+        days = total_seconds // 86400
+        total_seconds %= 86400
+        hours = total_seconds // 3600
+        total_seconds %= 3600
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        if days > 0:
+            return (f'{days}d {hours:02d}h {minutes:02d}m {seconds:02d}s')
+        if hours > 0:
+            return f'{hours}h {minutes:02d}m {seconds:02d}s'
+        if minutes > 0:
+            return f'{minutes}m {seconds:02d}s'
+        return f'{seconds}s'
+
+    # Matches the format_bytes function used in peer_status
+    @staticmethod
+    def _format_bytes(bytes_val):
+        # Match PeerReplayer::format_bytes()
+        kib = 1024.0
+        mib = kib * 1024.0
+        gib = mib * 1024.0
+        tib = gib * 1024.0
+        pib = tib * 1024.0
+        if bytes_val >= pib:
+            return f'{bytes_val / pib:.2f} PiB'
+        if bytes_val >= tib:
+            return f'{bytes_val / tib:.2f} TiB'
+        if bytes_val >= gib:
+            return f'{bytes_val / gib:.2f} GiB'
+        if bytes_val >= mib:
+            return f'{bytes_val / mib:.2f} MiB'
+        if bytes_val >= kib:
+            return f'{bytes_val / kib:.2f} KiB'
+        return f'{bytes_val:.2f} B'
+
+    @staticmethod
+    def _order_dict(d, keys):
+        ordered = {}
+        for key in keys:
+            if key in d:
+                ordered[key] = d[key]
+        for key, val in d.items():
+            if key not in ordered:
+                ordered[key] = val
+        return ordered
+
+    # to match the output of peer_status
+    @staticmethod
+    def _order_current_syncing_snap(snap):
+        if not isinstance(snap, dict):
+            return snap
+        snap = dict(snap)
+        crawl = snap.get('crawl')
+        if isinstance(crawl, dict):
+            snap['crawl'] = FSSnapshotMirror._order_dict(crawl, ('state', 'duration'))
+        dq_wait = snap.get('datasync_queue_wait')
+        if isinstance(dq_wait, dict):
+            snap['datasync_queue_wait'] = FSSnapshotMirror._order_dict(
+                dq_wait, ('state', 'duration'))
+        bytes_obj = snap.get('bytes')
+        if isinstance(bytes_obj, dict):
+            snap['bytes'] = FSSnapshotMirror._order_dict(
+                bytes_obj, ('sync_bytes', 'total_bytes', 'sync_percent'))
+        files_obj = snap.get('files')
+        if isinstance(files_obj, dict):
+            snap['files'] = FSSnapshotMirror._order_dict(
+                files_obj, ('sync_files', 'total_files', 'sync_percent'))
+        return FSSnapshotMirror._order_dict(
+            snap, ('id', 'name', 'sync-mode', 'avg_read_throughput_bytes',
+                   'avg_write_throughput_bytes', 'crawl', 'datasync_queue_wait',
+                   'bytes', 'files', 'eta'))
+
+    @staticmethod
+    def _format_last_sync_stat_for_display(stat):
+        if not isinstance(stat, dict):
+            return stat
+
+        out = dict(stat)
+        last_synced_snap = out.get('last_synced_snap')
+        if isinstance(last_synced_snap, dict):
+            snap = dict(last_synced_snap)
+            for key in ('crawl_duration', 'datasync_queue_wait_duration',
+                        'sync_duration'):
+                val = snap.get(key)
+                if isinstance(val, (int, float)):
+                    snap[key] = FSSnapshotMirror._format_time(val)
+            sync_bytes = snap.get('sync_bytes')
+            if isinstance(sync_bytes, (int, float)):
+                snap['sync_bytes'] = FSSnapshotMirror._format_bytes(sync_bytes)
+            sync_time_stamp = snap.get('sync_time_stamp')
+            if isinstance(sync_time_stamp, (int, float)):
+                # Match peer_status dump_stream output for ceph::mono_clock
+                snap['sync_time_stamp'] = f'{sync_time_stamp:.6f}s'
+            out['last_synced_snap'] = FSSnapshotMirror._order_dict(
+                snap, ('id', 'name', 'crawl_duration',
+                       'datasync_queue_wait_duration', 'sync_duration',
+                       'sync_time_stamp', 'sync_bytes', 'sync_files'))
+
+        current_syncing_snap = out.get('current_syncing_snap')
+        if isinstance(current_syncing_snap, dict):
+            out['current_syncing_snap'] = FSSnapshotMirror._order_current_syncing_snap(
+                current_syncing_snap)
+
+        return FSSnapshotMirror._order_dict(
+            out, ('state', 'failure_reason', 'current_syncing_snap',
+                  'last_synced_snap', 'snaps_synced', 'snaps_deleted',
+                  'snaps_renamed'))
+
     def _open_metadata_ioctx(self, filesystem):
         metadata_pool_id = FSSnapshotMirror.get_metadata_pool(filesystem, self.fs_map)
         if not metadata_pool_id:
@@ -847,7 +960,7 @@ class FSSnapshotMirror:
                         log.warning(f'failed to decode sync stat for key {key}: {e}')
                         continue
                     out_key = FSSnapshotMirror.sync_stat_metrics_output_key(peer, dir_path)
-                    metrics[out_key] = stat
+                    metrics[out_key] = FSSnapshotMirror._format_last_sync_stat_for_display(stat)
                 start = omap_vals.popitem()[0]
         return metrics
 
@@ -885,11 +998,12 @@ class FSSnapshotMirror:
                         if omap_key in omap_stats:
                             out_key = FSSnapshotMirror.sync_stat_metrics_output_key(
                                 peer, dir_path)
-                            metrics[out_key] = omap_stats[omap_key]
+                            metrics[out_key] = FSSnapshotMirror._format_last_sync_stat_for_display(
+                                omap_stats[omap_key])
                 else:
                     metrics = self._load_sync_stat_metrics(ioctx, filesystem, peer_uuid)
 
-                return 0, json.dumps(metrics, indent=4, sort_keys=True), ''
+                return 0, json.dumps(metrics, indent=4), ''
         except MirrorException as me:
             return me.args[0], '', me.args[1]
 

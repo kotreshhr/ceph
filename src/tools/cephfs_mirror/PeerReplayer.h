@@ -678,6 +678,8 @@ private:
                              bool use_aio_omap_set = false);
   void add_live_sync_metrics_to_persist(json_spirit::mObject &obj,
                                         SnapSyncStat &sync_stat);
+  void add_last_sync_metrics_to_persist(json_spirit::mObject &obj,
+                                        SnapSyncStat &sync_stat);
   std::string peer_sync_stat_omap_key(std::string_view dir_root) const;
 
 

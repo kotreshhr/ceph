@@ -492,37 +492,41 @@ void PeerReplayer::load_persisted_dir_sync_stat(const std::string &dir_root) {
   }
   auto &sync_stat = st_it->second;
 
-  if (get_json_value(obj, "last_synced_snap_id", &v)) {
-    uint64_t snap_id = v.get_uint64();
-    if (get_json_value(obj, "last_synced_snap_name", &v)) {
-      sync_stat.last_synced_snap = std::make_pair(snap_id, v.get_str());
+  if (get_json_value(obj, "last_synced_snap", &v) && v.type() == json_spirit::obj_type) {
+    auto &last_synced_snap = v.get_obj();
+    if (get_json_value(last_synced_snap, "id", &v)) {
+      uint64_t snap_id = v.get_uint64();
+      if (get_json_value(last_synced_snap, "name", &v)) {
+        sync_stat.last_synced_snap = std::make_pair(snap_id, v.get_str());
+      }
+    }
+    if (get_json_value(last_synced_snap, "crawl_duration", &v)) {
+      sync_stat.last_sync_crawl_duration = v.get_real();
+    }
+    if (get_json_value(last_synced_snap, "datasync_queue_wait_duration", &v)) {
+      sync_stat.last_sync_datasync_queue_wait_duration = v.get_real();
+    }
+    if (get_json_value(last_synced_snap, "sync_duration", &v)) {
+      sync_stat.last_sync_duration = v.get_real();
+    }
+    if (get_json_value(last_synced_snap, "sync_time_stamp", &v)) {
+      sync_stat.last_synced = monotime_from_double(v.get_real());
+    }
+    if (get_json_value(last_synced_snap, "sync_bytes", &v)) {
+      sync_stat.last_sync_bytes = v.get_uint64();
+    }
+    if (get_json_value(last_synced_snap, "sync_files", &v)) {
+      sync_stat.last_sync_files = v.get_uint64();
     }
   }
-  if (get_json_value(obj, "last_sync_duration", &v)) {
-    sync_stat.last_sync_duration = v.get_real();
-  }
-  if (get_json_value(obj, "last_sync_crawl_duration", &v)) {
-    sync_stat.last_sync_crawl_duration = v.get_real();
-  }
-  if (get_json_value(obj, "last_sync_datasync_queue_wait_duration", &v)) {
-    sync_stat.last_sync_datasync_queue_wait_duration = v.get_real();
-  }
-  if (get_json_value(obj, "last_sync_bytes", &v)) {
-    sync_stat.last_sync_bytes = v.get_uint64();
-  }
-  if (get_json_value(obj, "last_sync_files", &v)) {
-    sync_stat.last_sync_files = v.get_uint64();
-  }
-  if (get_json_value(obj, "last_synced_time", &v)) {
-    sync_stat.last_synced = monotime_from_double(v.get_real());
-  }
-  if (get_json_value(obj, "synced_snap_count", &v)) {
+
+  if (get_json_value(obj, "snaps_synced", &v)) {
     sync_stat.synced_snap_count = v.get_uint64();
   }
-  if (get_json_value(obj, "deleted_snap_count", &v)) {
+  if (get_json_value(obj, "snaps_deleted", &v)) {
     sync_stat.deleted_snap_count = v.get_uint64();
   }
-  if (get_json_value(obj, "renamed_snap_count", &v)) {
+  if (get_json_value(obj, "snaps_renamed", &v)) {
     sync_stat.renamed_snap_count = v.get_uint64();
   }
 }
@@ -641,6 +645,46 @@ void PeerReplayer::add_live_sync_metrics_to_persist(json_spirit::mObject &obj,
   }
 }
 
+void PeerReplayer::add_last_sync_metrics_to_persist(json_spirit::mObject &obj,
+                                                    SnapSyncStat &sync_stat) {
+  if (sync_stat.last_synced_snap) {
+    json_spirit::mObject snap;
+    snap["id"] =
+      json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.last_synced_snap->first));
+    snap["name"] = json_spirit::mValue(sync_stat.last_synced_snap->second);
+    if (sync_stat.last_sync_crawl_duration) {
+      snap["crawl_duration"] = json_spirit::mValue(*sync_stat.last_sync_crawl_duration);
+    }
+    if (sync_stat.last_sync_datasync_queue_wait_duration) {
+      snap["datasync_queue_wait_duration"] =
+        json_spirit::mValue(*sync_stat.last_sync_datasync_queue_wait_duration);
+    }
+    if (sync_stat.last_sync_duration) {
+      snap["sync_duration"] = json_spirit::mValue(*sync_stat.last_sync_duration);
+    }
+    if (!clock::is_zero(sync_stat.last_synced)) {
+      snap["sync_time_stamp"] =
+        json_spirit::mValue(monotime_to_double(sync_stat.last_synced));
+    }
+    if (sync_stat.last_sync_bytes) {
+      snap["sync_bytes"] =
+        json_spirit::mValue(static_cast<boost::uint64_t>(*sync_stat.last_sync_bytes));
+    }
+    if (sync_stat.last_sync_files) {
+      snap["sync_files"] =
+        json_spirit::mValue(static_cast<boost::uint64_t>(*sync_stat.last_sync_files));
+    }
+    obj["last_synced_snap"] = json_spirit::mValue(snap);
+  }
+
+  obj["snaps_synced"] =
+    json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.synced_snap_count));
+  obj["snaps_deleted"] =
+    json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.deleted_snap_count));
+  obj["snaps_renamed"] =
+    json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.renamed_snap_count));
+}
+
 void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root,
                                          bool use_aio_omap_set) {
   if (!m_local_ioctx) {
@@ -659,39 +703,7 @@ void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root,
 
   json_spirit::mObject obj;
   add_live_sync_metrics_to_persist(obj, sync_stat);
-
-  if (sync_stat.last_synced_snap) {
-    obj["last_synced_snap_id"] =
-      json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.last_synced_snap->first));
-    obj["last_synced_snap_name"] = json_spirit::mValue(sync_stat.last_synced_snap->second);
-  }
-  if (sync_stat.last_sync_duration) {
-    obj["last_sync_duration"] = json_spirit::mValue(*sync_stat.last_sync_duration);
-  }
-  if (sync_stat.last_sync_crawl_duration) {
-    obj["last_sync_crawl_duration"] = json_spirit::mValue(*sync_stat.last_sync_crawl_duration);
-  }
-  if (sync_stat.last_sync_datasync_queue_wait_duration) {
-    obj["last_sync_datasync_queue_wait_duration"] =
-      json_spirit::mValue(*sync_stat.last_sync_datasync_queue_wait_duration);
-  }
-  if (sync_stat.last_sync_bytes) {
-    obj["last_sync_bytes"] =
-      json_spirit::mValue(static_cast<boost::uint64_t>(*sync_stat.last_sync_bytes));
-  }
-  if (sync_stat.last_sync_files) {
-    obj["last_sync_files"] =
-      json_spirit::mValue(static_cast<boost::uint64_t>(*sync_stat.last_sync_files));
-  }
-  if (!clock::is_zero(sync_stat.last_synced)) {
-    obj["last_synced_time"] = json_spirit::mValue(monotime_to_double(sync_stat.last_synced));
-  }
-  obj["synced_snap_count"] =
-    json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.synced_snap_count));
-  obj["deleted_snap_count"] =
-    json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.deleted_snap_count));
-  obj["renamed_snap_count"] =
-    json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.renamed_snap_count));
+  add_last_sync_metrics_to_persist(obj, sync_stat);
 
   bufferlist bl;
   bl.append(json_spirit::write(json_spirit::mValue(obj)));

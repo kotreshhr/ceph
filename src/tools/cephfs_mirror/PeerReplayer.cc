@@ -363,6 +363,8 @@ int PeerReplayer::init() {
     data_replayer->create(name.c_str());
     m_data_replayers.push_back(std::move(data_replayer));
   }
+
+  set_changed_mirroring_configurations();
   return 0;
 }
 
@@ -2518,6 +2520,9 @@ void PeerReplayer::set_changed_mirroring_configurations() {
                                           "cephfs_mirror_distribute_datasync_threads");
   uint64_t datasync_files_per_batch_conf = g_ceph_context->_conf.get_val<uint64_t>(
                                           "cephfs_mirror_datasync_files_per_batch");
+  uint64_t live_metrics_persist_interval_conf =
+    g_ceph_context->_conf.get_val<std::chrono::seconds>(
+      "cephfs_mirror_live_metrics_persist_interval").count();
 
   // Compare and set configs
   uint64_t blockdiff_min_file_size = set_blockdiff_min_file_size(blockdiff_min_file_size_conf);
@@ -2536,6 +2541,13 @@ void PeerReplayer::set_changed_mirroring_configurations() {
     dout(10) << ":  cephfs_mirror_datasync_files_per_batch changed"
              << " old=" << datasync_files_per_batch
              << " new=" << datasync_files_per_batch_conf << dendl;
+  }
+  uint64_t live_metrics_persist_interval =
+    set_live_metrics_persist_interval(live_metrics_persist_interval_conf);
+  if (live_metrics_persist_interval != live_metrics_persist_interval_conf) {
+    dout(10) << ": cephfs_mirror_live_metrics_persist_interval changed"
+             << " old=" << live_metrics_persist_interval
+             << " new=" << live_metrics_persist_interval_conf << dendl;
   }
 }
 
@@ -2675,8 +2687,6 @@ void PeerReplayer::run(SnapshotReplayerThread *replayer) {
   dout(10) << ": snapshot replayer=" << replayer << dendl;
 
   monotime last_directory_scan = clock::zero();
-  auto scan_interval = g_ceph_context->_conf.get_val<uint64_t>(
-    "cephfs_mirror_directory_scan_interval");
 
   std::unique_lock locker(m_lock);
   while (true) {
@@ -2696,7 +2706,27 @@ void PeerReplayer::run(SnapshotReplayerThread *replayer) {
 
     locker.lock();
 
+    // Write metrics to cephfs_mirror object's omap at configured interval
     auto now = clock::now();
+    std::chrono::duration<double> persist_timo = now - m_last_live_metrics_persist;
+    if (persist_timo.count() >= get_live_metrics_persist_interval()) {
+      m_last_live_metrics_persist = now;
+      if (!m_registered.empty()) {
+        std::vector<std::string> dirs;
+        dirs.reserve(m_registered.size());
+        for (const auto &kv : m_registered) {
+          dirs.push_back(kv.first);
+        }
+        locker.unlock();
+        for (const auto &dir_root : dirs) {
+          persist_dir_sync_stat(dir_root, true);
+        }
+        locker.lock();
+      }
+    }
+
+    auto scan_interval = g_ceph_context->_conf.get_val<uint64_t>(
+      "cephfs_mirror_directory_scan_interval");
     std::chrono::duration<double> timo = now - last_directory_scan;
     if (timo.count() >= scan_interval && m_directories.size()) {
       dout(20) << ": trying to pick from " << m_directories.size() << " directories" << dendl;

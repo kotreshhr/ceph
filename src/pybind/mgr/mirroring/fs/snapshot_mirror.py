@@ -7,6 +7,7 @@ import pickle
 import re
 import stat
 import threading
+import time
 import uuid
 from typing import Any, Dict
 
@@ -32,6 +33,8 @@ from .dir_map.state_transition import ActionType
 log = logging.getLogger(__name__)
 
 CEPHFS_IMAGE_POLICY_UPDATE_THROTTLE_INTERVAL = 1
+SYNC_STAT_CACHE_TTL_SECS = 5
+SYNC_STAT_PARTIAL_CACHE_MAX = 32
 
 class FSPolicy:
     class InstanceListener(InstanceWatcher.Listener):
@@ -288,6 +291,7 @@ class FSSnapshotMirror:
         self.pool_policy = {}
         self.fs_map = self.mgr.get('fs_map')
         self.lock = threading.Lock()
+        self._sync_stat_cache = {}
         self.refresh_pool_policy()
         self.local_fs = CephfsClient(mgr)
 
@@ -964,6 +968,113 @@ class FSSnapshotMirror:
                 start = omap_vals.popitem()[0]
         return metrics
 
+    @staticmethod
+    def _requested_metrics_keys(peers, dir_path):
+        return {FSSnapshotMirror.sync_stat_metrics_output_key(peer, dir_path)
+                for peer in peers}
+
+    @staticmethod
+    def _metrics_for_peer(metrics, peer_uuid):
+        result = {}
+        prefix_len = len(peer_uuid)
+        for key, val in metrics.items():
+            if not key.startswith(peer_uuid):
+                continue
+            if len(key) > prefix_len and key[prefix_len] != '/':
+                continue
+            result[key] = val
+        return result
+
+    def _prune_sync_stat_cache(self, cache):
+        now = time.monotonic()
+        complete = cache.get('complete')
+        if complete and now >= complete['expires_at']:
+            cache['complete'] = None
+        partial = cache['partial']
+        for key, entry in list(partial.items()):
+            if now >= entry['expires_at']:
+                partial.pop(key, None)
+                if key in cache['partial_order']:
+                    cache['partial_order'].remove(key)
+
+    def _get_sync_stat_cache(self, filesystem):
+        cache = self._sync_stat_cache.setdefault(
+            filesystem, {'complete': None, 'partial': {}, 'partial_order': []})
+        self._prune_sync_stat_cache(cache)
+        return cache
+
+    def _try_get_cached_sync_stat_metrics(self, cache, mirrored_dir_path,
+                                          peer_uuid, peers):
+        now = time.monotonic()
+        complete = cache.get('complete')
+
+        if mirrored_dir_path:
+            dir_path = FSSnapshotMirror.norm_path(mirrored_dir_path)
+            requested = FSSnapshotMirror._requested_metrics_keys(peers, dir_path)
+            if complete and now < complete['expires_at']:
+                if complete['peer_uuid'] is None or complete['peer_uuid'] == peer_uuid:
+                    if requested.issubset(complete['metrics']):
+                        return {k: complete['metrics'][k] for k in requested}
+            partial = cache['partial'].get((dir_path, peer_uuid))
+            if partial and now < partial['expires_at']:
+                if requested.issubset(partial['metrics']):
+                    return {k: partial['metrics'][k] for k in requested}
+            return None
+
+        if not complete or now >= complete['expires_at']:
+            return None
+        if peer_uuid is None:
+            if complete['peer_uuid'] is not None:
+                return None
+            return dict(complete['metrics'])
+        if complete['peer_uuid'] not in (None, peer_uuid):
+            return None
+        return FSSnapshotMirror._metrics_for_peer(complete['metrics'], peer_uuid)
+
+    def _store_sync_stat_cache(self, cache, metrics, complete, peer_uuid,
+                               dir_path=None):
+        expires_at = time.monotonic() + SYNC_STAT_CACHE_TTL_SECS
+        if complete:
+            cache['complete'] = {
+                'metrics': metrics,
+                'expires_at': expires_at,
+                'peer_uuid': peer_uuid,
+            }
+            return
+
+        partial_key = (dir_path, peer_uuid)
+        cache['partial'][partial_key] = {
+            'metrics': metrics,
+            'expires_at': expires_at,
+        }
+        order = cache['partial_order']
+        if partial_key in order:
+            order.remove(partial_key)
+        order.append(partial_key)
+        while len(order) > SYNC_STAT_PARTIAL_CACHE_MAX:
+            cache['partial'].pop(order.pop(0), None)
+
+    def _fetch_sync_stat_metrics(self, ioctx, filesystem, peers,
+                                 mirrored_dir_path, peer_uuid):
+        if mirrored_dir_path:
+            dir_path = FSSnapshotMirror.norm_path(mirrored_dir_path)
+            keys = [FSSnapshotMirror.sync_stat_omap_key(filesystem, peer, dir_path)
+                    for peer in peers]
+            omap_stats = self._read_sync_stat_by_keys(ioctx, keys)
+            metrics = {}
+            for peer in peers:
+                omap_key = FSSnapshotMirror.sync_stat_omap_key(filesystem, peer,
+                                                               dir_path)
+                if omap_key in omap_stats:
+                    out_key = FSSnapshotMirror.sync_stat_metrics_output_key(
+                        peer, dir_path)
+                    metrics[out_key] = FSSnapshotMirror._format_last_sync_stat_for_display(
+                        omap_stats[omap_key])
+            return metrics, False, dir_path
+
+        metrics = self._load_sync_stat_metrics(ioctx, filesystem, peer_uuid)
+        return metrics, True, None
+
     def metrics_status(self, filesystem, mirrored_dir_path, peer_uuid):
         """Return persisted mirror directory snapshot metrics as JSON"""
         try:
@@ -985,23 +1096,15 @@ class FSSnapshotMirror:
                                               f'filesystem {filesystem}')
                     peers = {peer_uuid: peers[peer_uuid]}
 
-                ioctx = self._open_metadata_ioctx(filesystem)
-                if mirrored_dir_path:
-                    dir_path = FSSnapshotMirror.norm_path(mirrored_dir_path)
-                    keys = [FSSnapshotMirror.sync_stat_omap_key(filesystem, peer, dir_path)
-                            for peer in peers]
-                    omap_stats = self._read_sync_stat_by_keys(ioctx, keys)
-                    metrics = {}
-                    for peer in peers:
-                        omap_key = FSSnapshotMirror.sync_stat_omap_key(filesystem, peer,
-                                                                         dir_path)
-                        if omap_key in omap_stats:
-                            out_key = FSSnapshotMirror.sync_stat_metrics_output_key(
-                                peer, dir_path)
-                            metrics[out_key] = FSSnapshotMirror._format_last_sync_stat_for_display(
-                                omap_stats[omap_key])
-                else:
-                    metrics = self._load_sync_stat_metrics(ioctx, filesystem, peer_uuid)
+                cache = self._get_sync_stat_cache(filesystem)
+                metrics = self._try_get_cached_sync_stat_metrics(
+                    cache, mirrored_dir_path, peer_uuid, peers)
+                if metrics is None:
+                    ioctx = self._open_metadata_ioctx(filesystem)
+                    metrics, complete, dir_path = self._fetch_sync_stat_metrics(
+                        ioctx, filesystem, peers, mirrored_dir_path, peer_uuid)
+                    self._store_sync_stat_cache(cache, metrics, complete,
+                                              peer_uuid, dir_path)
 
                 return 0, json.dumps(metrics, indent=4), ''
         except MirrorException as me:

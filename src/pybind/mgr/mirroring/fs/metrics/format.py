@@ -1,3 +1,10 @@
+import time
+
+# Live omap metrics are refreshed every cephfs_mirror_live_metrics_persist_interval
+# (default 5s). Treat syncing progress as stale if not updated within this window.
+STALE_LIVE_METRICS_SECS = 15
+
+
 # Matches the format_time function used in peer_status
 def _format_time(total_seconds_d):
     total_seconds = int(round(total_seconds_d))
@@ -75,12 +82,32 @@ def format_peer_status_metrics(metrics, dir_path, peer_uuid, stat):
     metrics.setdefault(dir_path, {}).setdefault('peer', {})[peer_uuid] = stat
 
 
+def _mark_sync_stat_stale(stat):
+    out = dict(stat)
+    out.pop('current_syncing_snap', None)
+    out['state'] = 'stale'
+    return out
+
+
+def _apply_stale_live_metrics(stat):
+    if not isinstance(stat, dict) or stat.get('state') != 'syncing':
+        return stat
+
+    updated_at = stat.get('_metrics_updated_at')
+    if not isinstance(updated_at, (int, float)):
+        return stat
+
+    if time.time() - updated_at > STALE_LIVE_METRICS_SECS:
+        return _mark_sync_stat_stale(stat)
+    return stat
+
+
 # to match the output of peer_status
 def format_and_order_sync_stat_for_display(stat):
     if not isinstance(stat, dict):
         return stat
 
-    out = dict(stat)
+    out = dict(_apply_stale_live_metrics(stat))
     last_synced_snap = out.get('last_synced_snap')
     if isinstance(last_synced_snap, dict):
         snap = dict(last_synced_snap)

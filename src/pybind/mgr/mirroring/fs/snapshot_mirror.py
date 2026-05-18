@@ -871,6 +871,15 @@ class FSSnapshotMirror:
                    'bytes', 'files', 'eta'))
 
     @staticmethod
+    def _default_sync_stat_metrics():
+        return {
+            'state': 'idle',
+            'snaps_synced': 0,
+            'snaps_deleted': 0,
+            'snaps_renamed': 0,
+        }
+
+    @staticmethod
     def _mark_sync_stat_stale(stat):
         out = dict(stat)
         out.pop('current_syncing_snap', None)
@@ -1087,14 +1096,15 @@ class FSSnapshotMirror:
                     for peer in peers]
             omap_stats = self._read_sync_stat_by_keys(ioctx, keys)
             metrics = {}
+            default_stat = FSSnapshotMirror._default_sync_stat_metrics()
             for peer in peers:
+                out_key = FSSnapshotMirror.sync_stat_metrics_output_key(
+                    peer, dir_path)
                 omap_key = FSSnapshotMirror.sync_stat_omap_key(filesystem, peer,
                                                                dir_path)
-                if omap_key in omap_stats:
-                    out_key = FSSnapshotMirror.sync_stat_metrics_output_key(
-                        peer, dir_path)
-                    metrics[out_key] = FSSnapshotMirror._format_last_sync_stat_for_display(
-                        omap_stats[omap_key])
+                stat = omap_stats.get(omap_key, default_stat)
+                metrics[out_key] = FSSnapshotMirror._format_last_sync_stat_for_display(
+                    stat)
             return metrics, False, dir_path
 
         metrics = self._load_sync_stat_metrics(ioctx, filesystem, peer_uuid)

@@ -15,7 +15,11 @@ from ..utils import (
     parse_sync_stat_omap_key,
     sync_stat_omap_key,
 )
-from .format import format_and_order_sync_stat_for_display, format_peer_status_metrics
+from .format import (
+    default_sync_stat_metrics,
+    format_and_order_sync_stat_for_display,
+    format_peer_status_metrics,
+)
 
 log = logging.getLogger(__name__)
 
@@ -102,13 +106,13 @@ def fetch_sync_stat_metrics(ioctx, filesystem, peers, mirrored_dir_path, peer_uu
         keys = [sync_stat_omap_key(filesystem, peer, dir_path) for peer in peers]
         omap_stats = read_sync_stat_by_keys(ioctx, keys)
         metrics = {}
+        default_stat = default_sync_stat_metrics()
         for peer in peers:
             omap_key = sync_stat_omap_key(filesystem, peer, dir_path)
-            stat = omap_stats.get(omap_key)
-            if stat is not None:
-                format_peer_status_metrics(
-                    metrics, dir_path, peer,
-                    format_and_order_sync_stat_for_display(stat))
+            stat = omap_stats.get(omap_key, default_stat)
+            format_peer_status_metrics(
+                metrics, dir_path, peer,
+                format_and_order_sync_stat_for_display(stat))
         return metrics, False, dir_path
 
     metrics = load_sync_stat_metrics(ioctx, filesystem, peer_uuid)

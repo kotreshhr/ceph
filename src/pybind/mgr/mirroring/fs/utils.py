@@ -51,6 +51,7 @@ def parse_sync_stat_omap_key(key, filesystem):
 def decode_sync_stat_val(val):
     return json.loads(val.decode('utf-8'))
 
+
 def connect_to_cluster(client_name, cluster_name, conf_dct, desc=''):
     try:
         log.debug(f'connecting to {desc} cluster: {client_name}/{cluster_name}')

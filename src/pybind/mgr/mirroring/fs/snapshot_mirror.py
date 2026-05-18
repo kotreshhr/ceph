@@ -35,6 +35,9 @@ log = logging.getLogger(__name__)
 CEPHFS_IMAGE_POLICY_UPDATE_THROTTLE_INTERVAL = 1
 SYNC_STAT_CACHE_TTL_SECS = 5
 SYNC_STAT_PARTIAL_CACHE_MAX = 32
+# Live omap metrics are refreshed every cephfs_mirror_live_metrics_persist_interval
+# (default 5s). Treat syncing progress as stale if not updated within this window.
+STALE_LIVE_METRICS_SECS = 15
 
 class FSPolicy:
     class InstanceListener(InstanceWatcher.Listener):
@@ -868,11 +871,31 @@ class FSSnapshotMirror:
                    'bytes', 'files', 'eta'))
 
     @staticmethod
+    def _mark_sync_stat_stale(stat):
+        out = dict(stat)
+        out.pop('current_syncing_snap', None)
+        out['state'] = 'stale'
+        return out
+
+    @staticmethod
+    def _apply_stale_live_metrics(stat):
+        if not isinstance(stat, dict) or stat.get('state') != 'syncing':
+            return stat
+
+        updated_at = stat.get('_metrics_updated_at')
+        if not isinstance(updated_at, (int, float)):
+            return stat
+
+        if time.time() - updated_at > STALE_LIVE_METRICS_SECS:
+            return FSSnapshotMirror._mark_sync_stat_stale(stat)
+        return stat
+
+    @staticmethod
     def _format_last_sync_stat_for_display(stat):
         if not isinstance(stat, dict):
             return stat
 
-        out = dict(stat)
+        out = dict(FSSnapshotMirror._apply_stale_live_metrics(stat))
         last_synced_snap = out.get('last_synced_snap')
         if isinstance(last_synced_snap, dict):
             snap = dict(last_synced_snap)
@@ -897,6 +920,8 @@ class FSSnapshotMirror:
         if isinstance(current_syncing_snap, dict):
             out['current_syncing_snap'] = FSSnapshotMirror._order_current_syncing_snap(
                 current_syncing_snap)
+
+        out.pop('_metrics_updated_at', None)
 
         return FSSnapshotMirror._order_dict(
             out, ('state', 'failure_reason', 'current_syncing_snap',

@@ -11,6 +11,7 @@
 #include <boost/scope_exit.hpp>
 
 #include "common/admin_socket.h"
+#include "common/Clock.h"
 #include "common/ceph_context.h"
 #include "common/debug.h"
 #include "common/errno.h"
@@ -365,6 +366,7 @@ int PeerReplayer::init() {
   }
 
   set_changed_mirroring_configurations();
+
   return 0;
 }
 
@@ -704,6 +706,8 @@ void PeerReplayer::persist_dir_sync_stat(const std::string &dir_root,
   json_spirit::mObject obj;
   add_live_sync_metrics_to_persist(obj, sync_stat);
   add_last_sync_metrics_to_persist(obj, sync_stat);
+  obj["_metrics_updated_at"] =
+    json_spirit::mValue(static_cast<double>(ceph_clock_now()));
 
   bufferlist bl;
   bl.append(json_spirit::write(json_spirit::mValue(obj)));

@@ -631,6 +631,8 @@ private:
 
   ceph::mutex m_lock;
   ceph::condition_variable m_cond;
+  monotime m_last_live_metrics_persist = clock::zero();
+  std::atomic<uint64_t> m_live_metrics_persist_interval{5};
   RadosRef m_remote_cluster;
   MountRef m_remote_mount;
   std::atomic<bool> m_stopping{false};
@@ -744,6 +746,12 @@ private:
   }
   uint64_t set_datasync_files_per_batch(uint64_t value) {
     return datasync_files_per_batch.exchange(value, std::memory_order_relaxed);
+  }
+  uint64_t get_live_metrics_persist_interval() const {
+    return m_live_metrics_persist_interval.load(std::memory_order_relaxed);
+  }
+  uint64_t set_live_metrics_persist_interval(uint64_t value) {
+    return m_live_metrics_persist_interval.exchange(value, std::memory_order_relaxed);
   }
 
   // format routines for peer_status

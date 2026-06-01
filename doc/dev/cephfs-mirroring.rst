@@ -326,8 +326,22 @@ For example:
   ]
 
 One entry per mirror-daemon instance is displayed, along with information
-including configured peers and basic statistics. For more detailed statistics,
-use the admin socket interface as detailed below.
+including configured peers and basic statistics.
+
+**Directory snapshot sync metrics (mgr)**
+
+The mirroring module implements ``ceph fs snapshot mirror status``, which reads
+per-directory sync statistics from the ``cephfs_mirror`` object omap in the
+metadata pool (written by ``cephfs-mirror``) and returns JSON in the same nested
+``metrics/<dir>/peer/<uuid>`` format as ``fs mirror peer status``. The Manager
+module caches responses for five seconds, formats numeric fields for display,
+reports default idle metrics for newly added directories, and marks outdated
+``syncing`` omap entries as ``stale`` when ``_metrics_updated_at`` is older than
+15 seconds.
+
+See :ref:`Directory snapshot sync metrics<cephfs_mirroring_mgr_snapshot_status>`
+in :doc:`/cephfs/cephfs-mirroring` for command syntax, examples, and operator
+guidance.
 
 CephFS mirror daemons provide admin socket commands for querying mirror status.
 To list the available commands for ``mirror status``, run the following

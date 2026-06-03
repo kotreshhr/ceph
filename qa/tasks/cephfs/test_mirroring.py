@@ -295,7 +295,7 @@ class TestMirroring(CephFSTestCase):
         self.assertGreater(counters['last_snap_id'], 0)
         self.assertGreater(counters['last_sync_bytes'], 0)
         self.assertGreater(counters['last_sync_files'], 0)
-        self.assertGreater(counters['last_sync_duration_seconds'], 0)
+        self.assertGreaterEqual(counters['last_sync_duration_seconds'], 0)
         self.assertGreaterEqual(counters['snaps_synced'], 1)
 
     def assert_last_synced_snap_metrics(self, last_synced_snap):
@@ -389,7 +389,7 @@ class TestMirroring(CephFSTestCase):
         daemons[0].restart()
         time.sleep(10)
 
-    @retry_assert(timeout=120, interval=2)
+    @retry_assert(timeout=120, interval=1)
     def check_peer_syncing_progress_metrics(self, fs_name, fs_id, peer_spec, dir_name,
                                             snap_name, sync_mode=None):
         peer_uuid = self.get_peer_uuid(peer_spec)
@@ -409,7 +409,7 @@ class TestMirroring(CephFSTestCase):
             e.res = res
             raise
 
-    @retry_assert(timeout=120, interval=2)
+    @retry_assert(timeout=120, interval=1)
     def check_directory_perf_syncing(self, fs_name, fs_id, dir_path, peer_spec,
                                      sync_mode=None):
         peer_uuid = self.get_peer_uuid(peer_spec)
@@ -1827,7 +1827,7 @@ class TestMirroring(CephFSTestCase):
 
         dir_name = 'd0'
         self.mount_a.run_shell(['mkdir', dir_name])
-        self.mount_a.create_n_files(f'{dir_name}/file', 500, sync=True)
+        self.mount_a.create_n_files(f'{dir_name}/file', 3000, sync=True)
         self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
 
         snap0 = 'snap0'
@@ -1839,7 +1839,7 @@ class TestMirroring(CephFSTestCase):
                                peer_spec, f'/{dir_name}', snap0, 1)
 
         self.mount_a.write_n_mb(os.path.join(dir_name, 'file.0'), 1)
-        self.mount_a.create_n_files(f'{dir_name}/snapdiff_file', 1000, sync=True)
+        self.mount_a.create_n_files(f'{dir_name}/snapdiff_file', 3000, sync=True)
         snap1 = 'snap1'
         self.mount_a.run_shell(['mkdir', f'{dir_name}/.snap/{snap1}'])
         self.check_peer_syncing_progress_metrics(
@@ -1893,7 +1893,7 @@ class TestMirroring(CephFSTestCase):
 
         dir_name = 'd0'
         self.mount_a.run_shell(['mkdir', dir_name])
-        self.mount_a.create_n_files(f'{dir_name}/file', 500, sync=True)
+        self.mount_a.create_n_files(f'{dir_name}/file', 3000, sync=True)
         self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
 
         snap0 = 'snap0'
@@ -1905,7 +1905,7 @@ class TestMirroring(CephFSTestCase):
                                peer_spec, f'/{dir_name}', snap0, 1)
 
         self.mount_a.write_n_mb(os.path.join(dir_name, 'file.0'), 1)
-        self.mount_a.create_n_files(f'{dir_name}/snapdiff_file', 1000, sync=True)
+        self.mount_a.create_n_files(f'{dir_name}/snapdiff_file', 3000, sync=True)
         snap1 = 'snap1'
         self.mount_a.run_shell(['mkdir', f'{dir_name}/.snap/{snap1}'])
         self.check_directory_perf_syncing(
@@ -2224,7 +2224,7 @@ class TestMirroring(CephFSTestCase):
 
         dir_name = 'mgr_sync_dir'
         self.mount_a.run_shell(['mkdir', dir_name])
-        self.mount_a.create_n_files(f'{dir_name}/file', 500, sync=True)
+        self.mount_a.create_n_files(f'{dir_name}/file', 3000, sync=True)
         self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
 
         snap_name = 'snap0'

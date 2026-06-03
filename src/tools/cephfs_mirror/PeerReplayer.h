@@ -516,7 +516,8 @@ private:
     sync_stat.last_synced = clock::now();
     sync_stat.last_sync_duration = duration;
     sync_stat.last_sync_crawl_duration = sync_stat.crawl_duration;
-    sync_stat.last_sync_datasync_queue_wait_duration = sync_stat.datasync_queue_wait_duration;
+    sync_stat.last_sync_datasync_queue_wait_duration =
+      sync_stat.datasync_queue_wait_duration.value_or(0.0);
     sync_stat.last_sync_bytes = sync_stat.sync_bytes;
     sync_stat.last_sync_files = sync_stat.sync_files;
     ++sync_stat.synced_snap_count;

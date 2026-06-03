@@ -547,14 +547,12 @@ void PeerReplayer::update_directory_last_sync_perf_counters(
   }
 
   perf->set(l_cephfs_mirror_directory_last_crawl_duration_seconds,
-            sync_stat.last_sync_crawl_duration ?
-              static_cast<uint64_t>(*sync_stat.last_sync_crawl_duration) : 0);
+            static_cast<uint64_t>(sync_stat.last_sync_crawl_duration.value_or(0.0)));
   perf->set(l_cephfs_mirror_directory_last_datasync_wait_duration_seconds,
-            sync_stat.last_sync_datasync_queue_wait_duration ?
-              static_cast<uint64_t>(*sync_stat.last_sync_datasync_queue_wait_duration) : 0);
+            static_cast<uint64_t>(
+              sync_stat.last_sync_datasync_queue_wait_duration.value_or(0.0)));
   perf->set(l_cephfs_mirror_directory_last_sync_duration_seconds,
-            sync_stat.last_sync_duration ?
-              static_cast<uint64_t>(*sync_stat.last_sync_duration) : 0);
+            static_cast<uint64_t>(sync_stat.last_sync_duration.value_or(0.0)));
 
   utime_t t;
   if (!clock::is_zero(sync_stat.last_synced)) {
@@ -565,9 +563,9 @@ void PeerReplayer::update_directory_last_sync_perf_counters(
   perf->tset(l_cephfs_mirror_directory_last_sync_timestamp, t);
 
   perf->set(l_cephfs_mirror_directory_last_sync_bytes,
-            sync_stat.last_sync_bytes ? *sync_stat.last_sync_bytes : 0);
+            sync_stat.last_sync_bytes.value_or(0));
   perf->set(l_cephfs_mirror_directory_last_sync_files,
-            sync_stat.last_sync_files ? *sync_stat.last_sync_files : 0);
+            sync_stat.last_sync_files.value_or(0));
 }
 
 void PeerReplayer::update_directory_summary_perf_counters(
@@ -1045,28 +1043,19 @@ void PeerReplayer::add_last_sync_metrics_to_persist(json_spirit::mObject &obj,
     snap["id"] =
       json_spirit::mValue(static_cast<boost::uint64_t>(sync_stat.last_synced_snap->first));
     snap["name"] = json_spirit::mValue(sync_stat.last_synced_snap->second);
-    if (sync_stat.last_sync_crawl_duration) {
-      snap["crawl_duration"] = json_spirit::mValue(*sync_stat.last_sync_crawl_duration);
-    }
-    if (sync_stat.last_sync_datasync_queue_wait_duration) {
-      snap["datasync_queue_wait_duration"] =
-        json_spirit::mValue(*sync_stat.last_sync_datasync_queue_wait_duration);
-    }
-    if (sync_stat.last_sync_duration) {
-      snap["sync_duration"] = json_spirit::mValue(*sync_stat.last_sync_duration);
-    }
-    if (!clock::is_zero(sync_stat.last_synced)) {
-      snap["sync_time_stamp"] =
-        json_spirit::mValue(monotime_to_double(sync_stat.last_synced));
-    }
-    if (sync_stat.last_sync_bytes) {
-      snap["sync_bytes"] =
-        json_spirit::mValue(static_cast<boost::uint64_t>(*sync_stat.last_sync_bytes));
-    }
-    if (sync_stat.last_sync_files) {
-      snap["sync_files"] =
-        json_spirit::mValue(static_cast<boost::uint64_t>(*sync_stat.last_sync_files));
-    }
+    snap["crawl_duration"] = json_spirit::mValue(
+      sync_stat.last_sync_crawl_duration.value_or(0.0));
+    snap["datasync_queue_wait_duration"] = json_spirit::mValue(
+      sync_stat.last_sync_datasync_queue_wait_duration.value_or(0.0));
+    snap["sync_duration"] = json_spirit::mValue(
+      sync_stat.last_sync_duration.value_or(0.0));
+    snap["sync_time_stamp"] = json_spirit::mValue(
+      clock::is_zero(sync_stat.last_synced) ?
+        0.0 : monotime_to_double(sync_stat.last_synced));
+    snap["sync_bytes"] = json_spirit::mValue(static_cast<boost::uint64_t>(
+      sync_stat.last_sync_bytes.value_or(0)));
+    snap["sync_files"] = json_spirit::mValue(static_cast<boost::uint64_t>(
+      sync_stat.last_sync_files.value_or(0)));
     obj["last_synced_snap"] = json_spirit::mValue(snap);
   }
 
@@ -3598,23 +3587,20 @@ void PeerReplayer::dump_sync_stat(Formatter *f, const SnapSyncStat &sync_stat) {
     f->open_object_section("last_synced_snap");
     f->dump_unsigned("id", (*sync_stat.last_synced_snap).first);
     f->dump_string("name", (*sync_stat.last_synced_snap).second);
-    if (sync_stat.last_sync_crawl_duration) {
-      f->dump_string("crawl_duration", format_time(*sync_stat.last_sync_crawl_duration));
-    }
-    if (sync_stat.last_sync_datasync_queue_wait_duration) {
-      f->dump_string("datasync_queue_wait_duration",
-                     format_time(*sync_stat.last_sync_datasync_queue_wait_duration));
-    }
-    if (sync_stat.last_sync_duration) {
-      f->dump_string("sync_duration", format_time(*sync_stat.last_sync_duration));
+    f->dump_string("crawl_duration",
+                   format_time(sync_stat.last_sync_crawl_duration.value_or(0.0)));
+    f->dump_string("datasync_queue_wait_duration",
+                   format_time(sync_stat.last_sync_datasync_queue_wait_duration.value_or(0.0)));
+    f->dump_string("sync_duration",
+                   format_time(sync_stat.last_sync_duration.value_or(0.0)));
+    if (!clock::is_zero(sync_stat.last_synced)) {
       f->dump_stream("sync_time_stamp") << sync_stat.last_synced;
+    } else {
+      f->dump_stream("sync_time_stamp") << 0;
     }
-    if (sync_stat.last_sync_bytes) {
-      f->dump_string("sync_bytes", format_bytes(*sync_stat.last_sync_bytes));
-    }
-    if (sync_stat.last_sync_files) {
-      f->dump_unsigned("sync_files", *sync_stat.last_sync_files);
-    }
+    f->dump_string("sync_bytes",
+                   format_bytes(sync_stat.last_sync_bytes.value_or(0)));
+    f->dump_unsigned("sync_files", sync_stat.last_sync_files.value_or(0));
     f->close_section();
   }
   f->dump_unsigned("snaps_synced", sync_stat.synced_snap_count);

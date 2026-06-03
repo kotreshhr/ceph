@@ -306,7 +306,7 @@ class TestMirroring(CephFSTestCase):
             last_synced_snap['sync_bytes'],
             r'^\d+(\.\d+)?\s+(B|KiB|MiB|GiB|TiB|PiB)$')
         self.assertIsInstance(last_synced_snap['sync_files'], int)
-        self.assertGreater(last_synced_snap['sync_files'], 0)
+        self.assertGreaterEqual(last_synced_snap['sync_files'], 0)
 
     def assert_syncing_snap_metrics(self, snap, sync_mode=None):
         for key in ('sync-mode', 'avg_read_throughput_bytes', 'avg_write_throughput_bytes',

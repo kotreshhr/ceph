@@ -724,9 +724,17 @@ void PeerReplayer::add_directory(string_view dir_root) {
 
   {
     std::scoped_lock locker(m_lock);
+    if (std::find(m_directories.begin(), m_directories.end(), _dir_root) !=
+        m_directories.end()) {
+      dout(10) << ": dir_root=" << _dir_root << " already in replay list" << dendl;
+      return;
+    }
     m_directories.emplace_back(_dir_root);
     m_snap_sync_stats.emplace(_dir_root, SnapSyncStat());
-    create_directory_perf_counters(_dir_root);
+    if (m_directory_perf_counters.find(_dir_root) ==
+        m_directory_perf_counters.end()) {
+      create_directory_perf_counters(_dir_root);
+    }
   }
   load_persisted_dir_sync_stat(_dir_root);
   {

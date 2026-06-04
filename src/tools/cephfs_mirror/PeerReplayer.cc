@@ -3091,6 +3091,10 @@ int PeerReplayer::sync_snaps(const std::string &dir_root,
   } else {
     _reset_failed_count(dir_root);
   }
+  if (auto *dir_perf = find_directory_perf_counters(dir_root)) {
+    update_directory_current_sync_perf_counters(dir_perf,
+                                                m_snap_sync_stats.at(dir_root));
+  }
   return r;
 }
 
@@ -3154,6 +3158,10 @@ void PeerReplayer::run(SnapshotReplayerThread *replayer) {
             }
           } else {
             _inc_failed_count(*dir_root);
+            if (auto *dir_perf = find_directory_perf_counters(*dir_root)) {
+              update_directory_current_sync_perf_counters(
+                dir_perf, m_snap_sync_stats.at(*dir_root));
+            }
             if (m_perf_counters) {
               m_perf_counters->inc(l_cephfs_mirror_peer_replayer_snap_sync_failures);
             }

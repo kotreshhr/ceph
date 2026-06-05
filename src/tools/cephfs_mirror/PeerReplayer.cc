@@ -1031,6 +1031,9 @@ void PeerReplayer::add_live_sync_metrics_to_persist(json_spirit::mObject &obj,
     obj["current_syncing_snap"] = json_spirit::mValue(snap);
   } else if (sync_stat.failed) {
     obj["state"] = json_spirit::mValue("failed");
+    if (sync_stat.last_failed_reason) {
+      obj["failure_reason"] = json_spirit::mValue(*sync_stat.last_failed_reason);
+    }
   } else {
     obj["state"] = json_spirit::mValue("idle");
   }
@@ -3095,6 +3098,11 @@ int PeerReplayer::sync_snaps(const std::string &dir_root,
     update_directory_current_sync_perf_counters(dir_perf,
                                                 m_snap_sync_stats.at(dir_root));
   }
+  if (m_snap_sync_stats.at(dir_root).failed) {
+    locker.unlock();
+    persist_dir_sync_stat(dir_root);
+    locker.lock();
+  }
   return r;
 }
 
@@ -3161,6 +3169,11 @@ void PeerReplayer::run(SnapshotReplayerThread *replayer) {
             if (auto *dir_perf = find_directory_perf_counters(*dir_root)) {
               update_directory_current_sync_perf_counters(
                 dir_perf, m_snap_sync_stats.at(*dir_root));
+            }
+            if (m_snap_sync_stats.at(*dir_root).failed) {
+              locker.unlock();
+              persist_dir_sync_stat(*dir_root);
+              locker.lock();
             }
             if (m_perf_counters) {
               m_perf_counters->inc(l_cephfs_mirror_peer_replayer_snap_sync_failures);

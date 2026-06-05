@@ -381,6 +381,19 @@ class TestMirroring(CephFSTestCase):
             self.assert_syncing_snap_metrics(
                 mgr_snap, sync_mode=asok_snap.get('sync-mode'))
 
+    @retry_assert(timeout=120, interval=2)
+    def check_mgr_dir_stat_matches_asok(self, fs_name, fs_id, dir_name, peer_uuid,
+                                      mirrored_dir_path=None):
+        mgr_stat = self.dir_status_from_mgr(
+            fs_name, dir_name, peer_uuid, mirrored_dir_path)
+        asok_stat = self.dir_status_from_asok(fs_name, fs_id, dir_name, peer_uuid)
+        try:
+            self.assert_mgr_dir_stat_matches_asok(mgr_stat, asok_stat)
+        except RETRY_EXCEPTIONS as e:
+            e.mgr_stat = mgr_stat
+            e.asok_stat = asok_stat
+            raise
+
     def restart_mirror_daemon(self):
         # Same daemon identity as qa/tasks/cephfs_mirror.py (client: client.mirror).
         daemons = list(self.ctx.daemons.iter_daemons_of_role('cephfs-mirror'))
@@ -2234,11 +2247,8 @@ class TestMirroring(CephFSTestCase):
             snap_name, sync_mode='full')
 
         peer_uuid = self.get_peer_uuid(peer_spec)
-        mgr_stat = self.dir_status_from_mgr(
-            self.primary_fs_name, f'/{dir_name}', peer_uuid)
-        asok_stat = self.dir_status_from_asok(
+        self.check_mgr_dir_stat_matches_asok(
             self.primary_fs_name, self.primary_fs_id, f'/{dir_name}', peer_uuid)
-        self.assert_mgr_dir_stat_matches_asok(mgr_stat, asok_stat)
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_mgr_snapshot_mirror_status_default_idle_new_dir(self):

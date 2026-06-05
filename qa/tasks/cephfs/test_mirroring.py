@@ -2322,6 +2322,8 @@ class TestMirroring(CephFSTestCase):
         else:
             raise RuntimeError(-errno.ENOENT, 'expected unknown filesystem to fail')
 
+        self.remove_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir_name}')
+        self.peer_remove(self.primary_fs_name, self.primary_fs_id, peer_spec)
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
         try:
             self.get_ceph_cmd_stdout("fs", "snapshot", "mirror", "status",

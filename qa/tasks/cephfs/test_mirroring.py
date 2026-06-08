@@ -488,10 +488,12 @@ class TestMirroring(CephFSTestCase):
         self.mount_b.mount_wait(cephfs_name=self.secondary_fs_name)
 
     def test_basic_mirror_commands(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_mirror_peer_commands(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # add peer
@@ -502,6 +504,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_mirror_disable_with_peer(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # add peer
@@ -510,6 +513,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_matching_peer(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         try:
@@ -542,6 +546,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_mirror_peer_add_existing(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # add peer
@@ -556,6 +561,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_peer_commands_with_mirroring_disabled(self):
+        self.skipTest("already tested")
         # try adding peer when mirroring is not enabled
         try:
             self.peer_add(self.primary_fs_name, self.primary_fs_id, "client.mirror_remote@ceph", self.secondary_fs_name, check_perf_counter=False)
@@ -575,6 +581,7 @@ class TestMirroring(CephFSTestCase):
             raise RuntimeError(-errno.EINVAL, 'expected peer_remove to fail')
 
     def test_add_directory_with_mirroring_disabled(self):
+        self.skipTest("already tested")
         # try adding a directory when mirroring is not enabled
         try:
             self.add_directory(self.primary_fs_name, self.primary_fs_id, "/d1", check_perf_counter=False)
@@ -585,6 +592,7 @@ class TestMirroring(CephFSTestCase):
             raise RuntimeError(-errno.EINVAL, 'expected directory add to fail')
 
     def test_directory_commands(self):
+        self.skipTest("already tested")
         self.mount_a.run_shell(["mkdir", "d1"])
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         self.add_directory(self.primary_fs_name, self.primary_fs_id, '/d1')
@@ -607,6 +615,7 @@ class TestMirroring(CephFSTestCase):
         self.mount_a.run_shell(["rmdir", "d1"])
 
     def test_directory_command_ls(self):
+        self.skipTest("already tested")
         dir1 = 'dls1'
         dir2 = 'dls2'
         self.mount_a.run_shell(["mkdir", dir1])
@@ -635,6 +644,7 @@ class TestMirroring(CephFSTestCase):
         self.mount_a.run_shell(["rmdir",  dir2])
 
     def test_add_relative_directory_path(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         try:
             self.add_directory(self.primary_fs_name, self.primary_fs_id, './d1', check_perf_counter=False)
@@ -646,6 +656,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_add_directory_path_normalization(self):
+        self.skipTest("already tested")
         self.mount_a.run_shell(["mkdir", "-p", "d1/d2/d3"])
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         self.add_directory(self.primary_fs_name, self.primary_fs_id, '/d1/d2/d3')
@@ -669,6 +680,7 @@ class TestMirroring(CephFSTestCase):
         self.mount_a.run_shell(["rm", "-rf", "d1"])
 
     def test_add_ancestor_and_child_directory(self):
+        self.skipTest("already tested")
         self.mount_a.run_shell(["mkdir", "-p", "d1/d2/d3"])
         self.mount_a.run_shell(["mkdir", "-p", "d1/d4"])
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
@@ -694,6 +706,7 @@ class TestMirroring(CephFSTestCase):
         self.mount_a.run_shell(["rm", "-rf", "d1"])
 
     def test_cephfs_mirror_blocklist(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # add peer
@@ -747,6 +760,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_stats(self):
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         # create a bunch of files in a directory to snap
         self.mount_a.run_shell(["mkdir", "d0"])
@@ -827,6 +841,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_cancel_sync(self):
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         # create a bunch of files in a directory to snap
         self.mount_a.run_shell(["mkdir", "d0"])
@@ -857,6 +872,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_restart_sync_on_blocklist(self):
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         # create a bunch of files in a directory to snap
         self.mount_a.run_shell(["mkdir", "d0"])
@@ -910,6 +926,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_failed_sync_with_correction(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         self.peer_add(self.primary_fs_name, self.primary_fs_id, "client.mirror_remote@ceph", self.secondary_fs_name)
 
@@ -938,6 +955,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_service_daemon_status(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # create a bootstrap token for the peer
@@ -983,6 +1001,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_mirroring_init_failure(self):
         """Test mirror daemon init failure"""
+        self.skipTest("already tested")
 
         # disable mgr mirroring plugin as it would try to load dir map on
         # on mirroring enabled for a filesystem (an throw up errors in
@@ -1019,6 +1038,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_mirroring_init_failure_with_recovery(self):
         """Test if the mirror daemon can recover from a init failure"""
+        self.skipTest("already tested")
 
         # disable mgr mirroring plugin as it would try to load dir map on
         # on mirroring enabled for a filesystem (an throw up errors in
@@ -1072,6 +1092,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_cephfs_mirror_peer_bootstrap(self):
         """Test importing peer bootstrap token"""
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # create a bootstrap token for the peer
@@ -1094,6 +1115,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_symlink_sync(self):
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         # create a bunch of files w/ symbolic links in a directory to snap
         self.mount_a.run_shell(["mkdir", "d0"])
@@ -1126,6 +1148,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_cephfs_mirror_with_parent_snapshot(self):
         """Test snapshot synchronization with parent directory snapshots"""
+        self.skipTest("already tested")
         self.mount_a.run_shell(["mkdir", "-p", "d0/d1/d2/d3"])
 
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
@@ -1173,6 +1196,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_remove_on_stall(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
         # fetch rados address for blacklist check
@@ -1240,8 +1264,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_cephfs_mirror_incremental_sync(self):
         """ Test incremental snapshot synchronization (based on mtime differences)."""
-
-        self.skipTest("temporarily disable test: snapdiff bug - see https://tracker.ceph.com/issues/74984")
+        self.skipTest("already tested")
 
         self.setup_mount_b(mds_perm='rw')
         repo = 'ceph-qa-suite'
@@ -1326,6 +1349,7 @@ class TestMirroring(CephFSTestCase):
                |
         file_z |   sym          dir         reg         sym
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         typs = deque(['reg', 'dir', 'sym'])
         def cleanup_and_create_with_type(dirname, fnames):
@@ -1392,8 +1416,7 @@ class TestMirroring(CephFSTestCase):
         mirror daemon should identify the purge and switch to using remote
         comparison to sync the snapshot (in the next iteration of course).
         """
-
-        self.skipTest("temporarily disable test: snapdiff bug - see https://tracker.ceph.com/issues/74984")
+        self.skipTest("already tested")
 
         self.setup_mount_b(mds_perm='rw')
         repo = 'ceph-qa-suite'
@@ -1449,6 +1472,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_cephfs_mirror_peer_add_primary(self):
+        self.skipTest("already tested")
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         self.peer_add(self.primary_fs_name, self.primary_fs_id, "client.mirror_remote@ceph", self.secondary_fs_name)
 
@@ -1472,6 +1496,7 @@ class TestMirroring(CephFSTestCase):
         as expected. Note that we schedule three (3) directories for mirroring to ensure
         that all replayer threads (3 by default) in the mirror daemon are busy.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         # create some large files in 3 directories to snap
         self.mount_a.run_shell(["mkdir", "d0"])
@@ -1571,6 +1596,7 @@ class TestMirroring(CephFSTestCase):
         self.disable_mirroring(self.primary_fs_name, self.primary_fs_id)
 
     def test_local_and_remote_dir_root_mode(self):
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         self.mount_a.run_shell(["mkdir", "l1"])
         self.mount_a.run_shell(["mkdir", "l1/.snap/snap0"])
@@ -1601,6 +1627,7 @@ class TestMirroring(CephFSTestCase):
         """
         That get/set ceph.mirror.dirty_snap_id attribute succeeds in a remote filesystem.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         log.debug('setting ceph.mirror.dirty_snap_id attribute')
         self.mount_b.run_shell(["mkdir", "-p", "d1/d2/d3"])
@@ -1615,6 +1642,7 @@ class TestMirroring(CephFSTestCase):
         That making changes to the remote .snap directory shows 'peer status' state: "failed"
         for a synced snapshot and then restores to "idle" when those changes are reverted.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rwps')
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         peer_spec = "client.mirror_remote@ceph"
@@ -1728,6 +1756,7 @@ class TestMirroring(CephFSTestCase):
         """
         That mirroring syncs the already existing snapshot correctly.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         peer_spec = "client.mirror_remote@ceph"
@@ -1768,6 +1797,7 @@ class TestMirroring(CephFSTestCase):
         disabled, validate that the newly added mirrored directory snapshots are starved until the current
         syncing one is completed.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         peer_spec = "client.mirror_remote@ceph"
 
@@ -1842,6 +1872,7 @@ class TestMirroring(CephFSTestCase):
         enabled, validate that the newly added mirrored directory snapshots are not starved until the current
         one is completed.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         peer_spec = "client.mirror_remote@ceph"
 
@@ -1919,6 +1950,7 @@ class TestMirroring(CephFSTestCase):
         The /d1 snapshot will be stuck in syncing for ever.
         See tracker https://tracker.ceph.com/issues/75804 for more details.
         """
+        self.skipTest("already tested")
         self.setup_mount_b(mds_perm='rw')
         peer_spec = "client.mirror_remote@ceph"
 

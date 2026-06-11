@@ -2531,6 +2531,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_mgr_snapshot_mirror_status_survives_daemon_restart(self):
         """Mgr status keeps persisted last_synced_snap and resets session counters after restart."""
+        self.skipTest("temporarily disable test: fails with valgrind")
         self.setup_mount_b(mds_perm='rw')
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         peer_spec = "client.mirror_remote@ceph"

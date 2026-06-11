@@ -4,4 +4,12 @@ meta:
 tasks:
 - cephfs-mirror:
     client: client.mirror
-    valgrind: [--tool=memcheck, --leak-check=full]
+    # cephfs-mirror preforks: the child is the real daemon.  Teuthology's
+    # get_valgrind_args() passes --trace-children=no first; these overrides
+    # are appended after and take effect for the forked cephfs-mirror child.
+    valgrind:
+      - --tool=memcheck
+      - --leak-check=full
+      - --trace-children=yes
+      - --child-silent-after-fork=no
+      - --max-threads=1024

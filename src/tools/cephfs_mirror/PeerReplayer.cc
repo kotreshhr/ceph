@@ -1599,12 +1599,14 @@ int PeerReplayer::SnapDiffSync::init_directory(const std::string &epath,
 }
 
 int PeerReplayer::SnapDiffSync::next_entry(SyncEntry &entry, std::string *e_name,
-                                           snapid_t *snapid) {
+                                           snapid_t *snapid, struct ceph_statx *stx) {
   int r;
   if (!entry.sync_is_snapdiff()) {
     dout(20) << ": not snapdiff" << dendl;
     struct dirent de;
-    r = ceph_readdirplus_r(m_local, entry.dirp, &de, NULL, 0,
+    r = ceph_readdirplus_r(m_local, entry.dirp, &de, stx,
+                           CEPH_STATX_MODE | CEPH_STATX_UID | CEPH_STATX_GID |
+                           CEPH_STATX_SIZE | CEPH_STATX_ATIME | CEPH_STATX_MTIME,
                            AT_STATX_DONT_SYNC | AT_SYMLINK_NOFOLLOW, NULL);
     if (r < 0) {
       derr << ": failed to read directory=" << entry.epath << ", r=" << r << dendl;
@@ -1664,7 +1666,8 @@ int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx 
     std::string e_name;
     while (true) {
       e_name.clear();
-      r = next_entry(entry, &e_name, &snapid);
+      struct ceph_statx estx;
+      r = next_entry(entry, &e_name, &snapid, &estx);
       if (r < 0 || r == 0) {
         break;
       }
@@ -1705,14 +1708,15 @@ int PeerReplayer::SnapDiffSync::get_entry(std::string *epath, struct ceph_statx 
           break;
         }
 
-        struct ceph_statx estx;
-        r = ceph_statxat(m_local, m_fh->c_fd, _epath.c_str(), &estx,
-                         CEPH_STATX_MODE | CEPH_STATX_UID | CEPH_STATX_GID |
-                         CEPH_STATX_SIZE | CEPH_STATX_ATIME | CEPH_STATX_MTIME,
-                         AT_STATX_DONT_SYNC | AT_SYMLINK_NOFOLLOW);
-        if (r < 0) {
-          derr << ": failed to stat epath=" << epath << ", r=" << r << dendl;
-          return r;
+        if (entry.sync_is_snapdiff()) {
+          r = ceph_statxat(m_local, m_fh->c_fd, _epath.c_str(), &estx,
+                           CEPH_STATX_MODE | CEPH_STATX_UID | CEPH_STATX_GID |
+                           CEPH_STATX_SIZE | CEPH_STATX_ATIME | CEPH_STATX_MTIME,
+                           AT_STATX_DONT_SYNC | AT_SYMLINK_NOFOLLOW);
+          if (r < 0) {
+            derr << ": failed to stat epath=" << _epath << ", r=" << r << dendl;
+            return r;
+          }
         }
 
         bool pic = entry.is_purged_or_itype_changed() || m_deleted[entry.epath].contains(e_name);
@@ -1933,7 +1937,8 @@ int PeerReplayer::RemoteSync::get_entry(std::string *epath, struct ceph_statx *s
     int r;
     while (true) {
       struct dirent de;
-      r = ceph_readdirplus_r(m_local, entry.dirp, &de, NULL,
+      struct ceph_statx cstx;
+      r = ceph_readdirplus_r(m_local, entry.dirp, &de, &cstx,
                              CEPH_STATX_MODE | CEPH_STATX_UID | CEPH_STATX_GID |
                              CEPH_STATX_SIZE | CEPH_STATX_ATIME | CEPH_STATX_MTIME,
                              AT_STATX_DONT_SYNC | AT_SYMLINK_NOFOLLOW, NULL);
@@ -1947,17 +1952,7 @@ int PeerReplayer::RemoteSync::get_entry(std::string *epath, struct ceph_statx *s
 
       auto d_name = std::string(de.d_name);
       if (d_name != "." && d_name != "..") {
-        struct ceph_statx cstx;
         auto _epath = entry_path(entry.epath, d_name);
-        r = ceph_statxat(m_local, m_fh->c_fd, _epath.c_str(), &cstx,
-                         CEPH_STATX_MODE | CEPH_STATX_UID | CEPH_STATX_GID |
-                         CEPH_STATX_SIZE | CEPH_STATX_ATIME | CEPH_STATX_MTIME,
-                         AT_STATX_DONT_SYNC | AT_SYMLINK_NOFOLLOW);
-        if (r < 0) {
-          derr << ": failed to stat epath=" << _epath << ": " << cpp_strerror(r)
-               << dendl;
-          return r;
-        }
 
         if (S_ISDIR(cstx.stx_mode)) {
           ceph_dir_result *dirp;

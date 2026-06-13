@@ -362,7 +362,8 @@ private:
   private:
     int init_directory(const std::string &epath,
                        const struct ceph_statx &stx, bool pic, SyncEntry *se);
-    int next_entry(SyncEntry &entry, std::string *e_name, snapid_t *snapid);
+    int next_entry(SyncEntry &entry, std::string *e_name, snapid_t *snapid,
+                   struct ceph_statx *stx = nullptr);
     void fini_directory(SyncEntry &entry);
 
     std::map<std::string, std::set<std::string>> m_deleted;

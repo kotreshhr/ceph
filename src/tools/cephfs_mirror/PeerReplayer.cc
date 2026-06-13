@@ -695,7 +695,8 @@ int PeerReplayer::SyncMechanism::remote_mkdir(const std::string &epath, const st
 #define IOVEC_SIZE (8 * 1024 * 1024) // buffer size for each iovec
 int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string &epath,
                                  const struct ceph_statx &stx, const FHandles &fh,
-                                 uint64_t num_blocks, struct cblock *b) {
+                                 uint64_t num_blocks, struct cblock *b,
+                                 uint64_t *sync_size_out, bool *total_bytes_adjusted) {
   dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", num_blocks="
            << num_blocks << dendl;
   int l_fd;
@@ -707,7 +708,6 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
   uint64_t bytes_written = 0;
   sec_duration read_time{0};
   sec_duration write_time{0};
-  uint64_t discovered_delta = 0;
 
   inc_files_started(dir_root);
   int r = ceph_openat(m_local_mount, fh.c_fd, epath.c_str(), O_RDONLY | O_NOFOLLOW, 0);
@@ -718,6 +718,18 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
   }
 
   l_fd = r;
+  uint64_t sync_size = stx.stx_size;
+  struct ceph_statx fstx;
+  if (ceph_fstatx(m_local_mount, l_fd, &fstx, CEPH_STATX_SIZE, 0) == 0) {
+    sync_size = fstx.stx_size;
+  }
+  if (sync_size != stx.stx_size &&
+      (!total_bytes_adjusted || !*total_bytes_adjusted)) {
+    dout(1) << ": dir_root=" << dir_root << ", epath=" << epath
+            << ", crawl stat size=" << stx.stx_size
+            << " does not match fd stat size=" << sync_size
+            << ", using fd stat size" << dendl;
+  }
   r = ceph_openat(m_remote_mount, fh.r_fd_dir_root, epath.c_str(),
                   O_CREAT | O_WRONLY | O_NOFOLLOW, stx.stx_mode);
   if (r < 0) {
@@ -737,8 +749,10 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
   while (num_blocks > 0) {
     auto offset = b->offset;
     auto len = b->len;
-    discovered_delta += b->len;
-    inc_delta_bytes(dir_root, discovered_delta);
+    if (offset == 0 && b->len == stx.stx_size) {
+      len = sync_size;
+    }
+    inc_delta_bytes(dir_root, len);
 
     dout(10) << ": dir_root=" << dir_root << ", epath=" << epath << ", block: ["
              << offset << "~" << len << "]" << dendl;
@@ -820,9 +834,9 @@ int PeerReplayer::copy_to_remote(const std::string &dir_root,  const std::string
   add_io(dir_root, bytes_read, bytes_written, read_time.count(), write_time.count());
 
   if (num_blocks == 0 && r >= 0) { // handle blocklist case
-    dout(20) << ": truncating epath=" << epath << " to " << stx.stx_size << " bytes"
+    dout(20) << ": truncating epath=" << epath << " to " << sync_size << " bytes"
              << dendl;
-    r = ceph_ftruncate(m_remote_mount, r_fd, stx.stx_size);
+    r = ceph_ftruncate(m_remote_mount, r_fd, sync_size);
     if (r < 0) {
       derr << ": failed to truncate remote file path=" << epath << ": "
            << cpp_strerror(r) << dendl;
@@ -849,6 +863,16 @@ close_local_fd:
 
   dout(20) << ": dir_root=" << dir_root << ", epath=" << epath << " error=" << r << " synced" << dendl;
 
+  if (r == 0 && sync_size_out) {
+    *sync_size_out = sync_size;
+  }
+  if (r == 0 && sync_size != stx.stx_size && total_bytes_adjusted &&
+      !*total_bytes_adjusted) {
+    adjust_total_bytes_files(dir_root,
+                             (int64_t)sync_size - (int64_t)stx.stx_size);
+    *total_bytes_adjusted = true;
+  }
+
   return r == 0 ? 0 : r;
 }
 
@@ -861,9 +885,13 @@ int PeerReplayer::remote_file_op(std::shared_ptr<SyncMechanism>& syncm, const st
   int r;
   if (need_data_sync) {
     if (S_ISREG(stx.stx_mode)) {
+      uint64_t file_sync_size = stx.stx_size;
+      bool total_bytes_adjusted = false;
       r = syncm->get_changed_blocks(epath, stx, sync_check,
-                                    [this, &dir_root, &epath, &stx, &fh](uint64_t num_blocks, struct cblock *b) {
-                                      int ret = copy_to_remote(dir_root, epath, stx, fh, num_blocks, b);
+                                    [this, &dir_root, &epath, &stx, &fh, &file_sync_size,
+                                     &total_bytes_adjusted](uint64_t num_blocks, struct cblock *b) {
+                                      int ret = copy_to_remote(dir_root, epath, stx, fh, num_blocks, b,
+                                                                &file_sync_size, &total_bytes_adjusted);
                                       if (ret < 0) {
                                         derr << ": failed to copy path=" << epath << ": " << ret << dendl;
                                       }
@@ -873,9 +901,9 @@ int PeerReplayer::remote_file_op(std::shared_ptr<SyncMechanism>& syncm, const st
         return r;
       }
       if (m_perf_counters) {
-        m_perf_counters->inc(l_cephfs_mirror_peer_replayer_sync_bytes, stx.stx_size);
+        m_perf_counters->inc(l_cephfs_mirror_peer_replayer_sync_bytes, file_sync_size);
       }
-      inc_sync_bytes(dir_root, stx.stx_size);
+      inc_sync_bytes(dir_root, file_sync_size);
     } else if (S_ISLNK(stx.stx_mode)) {
       // free the remote link before relinking
       r = ceph_unlinkat(m_remote_mount, fh.r_fd_dir_root, epath.c_str(), 0);

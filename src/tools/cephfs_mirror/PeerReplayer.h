@@ -589,6 +589,15 @@ private:
     sync_stat.total_bytes += b;
     sync_stat.total_files++;
   }
+  void adjust_total_bytes_files(const std::string &dir_root, int64_t delta) {
+    std::scoped_lock locker(m_lock);
+    auto &sync_stat = m_snap_sync_stats.at(dir_root);
+    if (delta >= 0) {
+      sync_stat.total_bytes += delta;
+    } else {
+      sync_stat.total_bytes -= (uint64_t)(-delta);
+    }
+  }
   bool should_backoff(const std::string &dir_root, int *retval) {
     if (m_fs_mirror->is_blocklisted()) {
       *retval = -EBLOCKLISTED;
@@ -703,7 +712,8 @@ private:
                      const std::string &epath, const struct ceph_statx &stx,
                      bool sync_check, const FHandles &fh, bool need_data_sync, bool need_attr_sync);
   int copy_to_remote(const std::string &dir_root, const std::string &epath, const struct ceph_statx &stx,
-                     const FHandles &fh, uint64_t num_blocks, struct cblock *b);
+                     const FHandles &fh, uint64_t num_blocks, struct cblock *b,
+                     uint64_t *sync_size_out = nullptr, bool *total_bytes_adjusted = nullptr);
   int sync_perms(const std::string& path);
 
   // add syncm to syncm_q

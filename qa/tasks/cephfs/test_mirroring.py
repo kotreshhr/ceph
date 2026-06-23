@@ -546,7 +546,10 @@ class TestMirroring(CephFSTestCase):
         with safe_while(sleep=2, tries=60,
                         action='wait for mirror daemon recovery') as proceed:
             while proceed():
-                if not self.get_mirror_rados_addr(fs_name, fs_id):
+                try:
+                    if not self.get_mirror_rados_addr(fs_name, fs_id):
+                        continue
+                except CommandFailedError:
                     continue
                 try:
                     mirror_res = self.mirror_daemon_command(
@@ -2516,13 +2519,19 @@ class TestMirroring(CephFSTestCase):
         with safe_while(sleep=2, tries=20,
                         action='wait for mirror daemon recovery after SIGSTOP') as proceed:
             while proceed():
-                if not self.get_mirror_rados_addr(self.primary_fs_name,
-                                                   self.primary_fs_id):
+                try:
+                    if not self.get_mirror_rados_addr(self.primary_fs_name,
+                                                       self.primary_fs_id):
+                        continue
+                except CommandFailedError:
                     continue
-                res = self.mirror_daemon_command(
-                    f'mirror status for fs: {self.primary_fs_name}',
-                    'fs', 'mirror', 'status',
-                    f'{self.primary_fs_name}@{self.primary_fs_id}')
+                try:
+                    res = self.mirror_daemon_command(
+                        f'mirror status for fs: {self.primary_fs_name}',
+                        'fs', 'mirror', 'status',
+                        f'{self.primary_fs_name}@{self.primary_fs_id}')
+                except CommandFailedError:
+                    continue
                 if 'snap_dirs' in res:
                     break
 

@@ -12332,18 +12332,8 @@ bool Server::build_snap_diff(
     }
   } before;
 
-  auto get_synced_mtime = [&](CInode *in, utime_t &mtime) -> bool {
-    if (in->is_dir()) {
-      mtime = in->get_inode()->mtime;
-      return true;
-    }
-    if (mdr->is_rdlocked(&in->filelock)) {
-      mtime = in->get_inode()->mtime;
-      return true;
-    }
-    MutationImpl::LockOpVec lov;
-    lov.add_rdlock(&in->filelock);
-    if (!mds->locker->acquire_locks(mdr, lov)) {
+  auto rdlock_file_mtime = [&](CInode *in, utime_t &mtime) -> bool {
+    if (!mds->locker->rdlock_start(&in->filelock, mdr)) {
       dout(10) << __func__ << " waiting for snapflush, deferring readdir_snapdiff on "
 	       << *in << " snap " << snapid_prev << " vs. " << snapid << dendl;
       if (waiting)
@@ -12423,9 +12413,6 @@ bool Server::build_snap_diff(
     }
     ceph_assert(in);
 
-    utime_t mtime;
-    if (!get_synced_mtime(in, mtime))
-      return false;
     if (in->is_dir()) {
 
       // we need to maintain the order of entries (determined by their name hashes)
@@ -12472,31 +12459,40 @@ bool Server::build_snap_diff(
       if (snapid_prev >= dn->first && snapid_prev <= dn->last) {
 	dout(30) << __func__ << " dn_before " << dn->get_name() << " "
 	  << dn->first << "/" << dn->last << dendl;
-	before = EntryInfo {dn, in, mtime};
+	before = EntryInfo {dn, in, in->get_inode()->mtime};
 	continue;
       } else {
 	if (before.dn && dn->get_name() == name_before) {
 	  if (before.in->ino() != in->ino()) {
 	    dout(30) << __func__ << " inode changed " << dn->get_name() << " "
-		     << dn->first << "/" << dn->last
-		     << " " << before.mtime << " vs. " << mtime
-		     << dendl;
+		     << dn->first << "/" << dn->last << dendl;
 	    if (!insert_deleted(before)) {
 	      break;
 	    }
 	    before.reset();
 	  } else {
-	    if (mtime == before.mtime) {
-	      dout(30) << __func__ << " timestamp not changed " << dn->get_name() << " "
-		       << dn->first << "/" << dn->last
-		       << " " << mtime
-		       << dendl;
-	      before.reset();
-	      continue;
-	    } else {
+	    utime_t mtime = in->get_inode()->mtime;
+	    if (mtime != before.mtime) {
 	      dout(30) << __func__ << " timestamp changed " << dn->get_name() << " "
 		       << dn->first << "/" << dn->last
 		       << " " << before.mtime << " vs. " << mtime
+		       << dendl;
+	      before.reset();
+	    } else {
+	      if (!rdlock_file_mtime(in, mtime))
+		return false;
+	      if (mtime == before.mtime) {
+		dout(30) << __func__ << " timestamp not changed " << dn->get_name() << " "
+			 << dn->first << "/" << dn->last
+			 << " " << mtime
+			 << dendl;
+		before.reset();
+		continue;
+	      }
+	      dout(30) << __func__ << " timestamp changed " << dn->get_name() << " "
+		       << dn->first << "/" << dn->last
+		       << " " << before.mtime << " vs. " << mtime
+		       << " (after snapflush)"
 		       << dendl;
 	      before.reset();
 	    }

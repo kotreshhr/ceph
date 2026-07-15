@@ -21,7 +21,8 @@ log = logging.getLogger(__name__)
 
 
 # Exceptions to retry in test assertions
-RETRY_EXCEPTIONS = (AssertionError, KeyError, IndexError, CommandFailedError)
+RETRY_EXCEPTIONS = (AssertionError, KeyError, IndexError, CommandFailedError,
+                     json.JSONDecodeError)
 # retry decorator
 def retry_assert(timeout=60, interval=1):
     """
@@ -187,48 +188,112 @@ class TestMirroring(CephFSTestCase):
                 if dirmap.get('state') == 'mapped':
                     return
 
+    @retry_assert(timeout=60, interval=1)
+    def _wait_mirroring_enabled(self, fs_name, fs_id, vbefore):
+        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
+                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
+        self.assertEqual(res['peers'], {})
+        self.assertEqual(res['snap_dirs']['dir_count'], 0)
+
+        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+        self.assertEqual(
+            res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]["labels"]["filesystem"],
+            fs_name)
+        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR][0]
+        self.assertGreater(vafter["counters"]["mirrored_filesystems"],
+                           vbefore["counters"]["mirrored_filesystems"])
+
+    @retry_assert(timeout=30, interval=1)
+    def _wait_mirroring_disabled(self, fs_name, fs_id, vbefore):
+        try:
+            self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
+                                       'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
+        except (CommandFailedError, json.JSONDecodeError):
+            pass
+        else:
+            raise AssertionError('expected admin socket to be unavailable')
+
+        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR][0]
+        self.assertLess(vafter["counters"]["mirrored_filesystems"],
+                        vbefore["counters"]["mirrored_filesystems"])
+
+    @retry_assert(timeout=30, interval=1)
+    def _wait_peer_added(self, fs_name, fs_id, peer_spec, remote_fs_name,
+                         vbefore, check_perf_counter):
+        self.verify_peer_added(fs_name, fs_id, peer_spec, remote_fs_name)
+        if not check_perf_counter:
+            return
+        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
+        self.assertGreater(vafter["counters"]["mirroring_peers"],
+                           vbefore["counters"]["mirroring_peers"])
+
+    @retry_assert(timeout=30, interval=1)
+    def _wait_peer_removed(self, fs_name, fs_id, vbefore):
+        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
+                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
+        self.assertEqual(res['peers'], {})
+        self.assertEqual(res['snap_dirs']['dir_count'], 0)
+
+        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
+        self.assertLess(vafter["counters"]["mirroring_peers"],
+                        vbefore["counters"]["mirroring_peers"])
+
+    @retry_assert(timeout=30, interval=1)
+    def _wait_directory_added(self, fs_name, fs_id, dir_count, vbefore,
+                              check_perf_counter):
+        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
+                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
+        new_dir_count = res['snap_dirs']['dir_count']
+        log.debug(f'new dir_count={new_dir_count}')
+        self.assertGreater(new_dir_count, dir_count)
+
+        if not check_perf_counter:
+            return
+        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
+        self.assertGreater(vafter["counters"]["directory_count"],
+                           vbefore["counters"]["directory_count"])
+
+    @retry_assert(timeout=30, interval=1)
+    def _wait_directory_removed(self, fs_name, fs_id, dir_count, vbefore):
+        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
+                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
+        new_dir_count = res['snap_dirs']['dir_count']
+        log.debug(f'new dir_count={new_dir_count}')
+        self.assertLess(new_dir_count, dir_count)
+
+        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
+        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
+        self.assertLess(vafter["counters"]["directory_count"],
+                        vbefore["counters"]["directory_count"])
+
+    @retry_assert(timeout=30, interval=1)
+    def _wait_mirror_directory_ls(self, fs_name, fs_id, *dir_names):
+        dirs_list = json.loads(
+            self.get_ceph_cmd_stdout("fs", "snapshot", "mirror", "ls", fs_name))
+        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
+                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
+        dir_count = res['snap_dirs']['dir_count']
+        self.assertEqual(len(dirs_list), dir_count)
+        for dir_name in dir_names:
+            self.assertIn(dir_name, dirs_list)
+
     def enable_mirroring(self, fs_name, fs_id):
         res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
         vbefore = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR][0]
 
         self.run_ceph_cmd("fs", "snapshot", "mirror", "enable", fs_name)
-        time.sleep(10)
-        # verify via asok
-        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
-                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
-        self.assertTrue(res['peers'] == {})
-        self.assertTrue(res['snap_dirs']['dir_count'] == 0)
-
-        # verify labelled perf counter
-        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-        self.assertEqual(res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]["labels"]["filesystem"],
-                         fs_name)
-        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR][0]
-
-        self.assertGreater(vafter["counters"]["mirrored_filesystems"],
-                           vbefore["counters"]["mirrored_filesystems"])
+        self._wait_mirroring_enabled(fs_name, fs_id, vbefore)
 
     def disable_mirroring(self, fs_name, fs_id):
         res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
         vbefore = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR][0]
 
         self.run_ceph_cmd("fs", "snapshot", "mirror", "disable", fs_name)
-        time.sleep(10)
-        # verify via asok
-        try:
-            self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
-                                       'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
-        except CommandFailedError:
-            pass
-        else:
-            raise RuntimeError('expected admin socket to be unavailable')
-
-        # verify labelled perf counter
-        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR][0]
-
-        self.assertLess(vafter["counters"]["mirrored_filesystems"],
-                        vbefore["counters"]["mirrored_filesystems"])
+        self._wait_mirroring_disabled(fs_name, fs_id, vbefore)
 
     def verify_peer_added(self, fs_name, fs_id, peer_spec, remote_fs_name=None):
         # verify via asok
@@ -253,13 +318,9 @@ class TestMirroring(CephFSTestCase):
             self.run_ceph_cmd("fs", "snapshot", "mirror", "peer_add", fs_name, peer_spec, remote_fs_name)
         else:
             self.run_ceph_cmd("fs", "snapshot", "mirror", "peer_add", fs_name, peer_spec)
-        time.sleep(10)
-        self.verify_peer_added(fs_name, fs_id, peer_spec, remote_fs_name)
-
-        if check_perf_counter:
-            res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-            vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
-            self.assertGreater(vafter["counters"]["mirroring_peers"], vbefore["counters"]["mirroring_peers"])
+        self._wait_peer_added(fs_name, fs_id, peer_spec, remote_fs_name,
+                              vbefore if check_perf_counter else None,
+                              check_perf_counter)
 
     def peer_remove(self, fs_name, fs_id, peer_spec):
         res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
@@ -267,16 +328,7 @@ class TestMirroring(CephFSTestCase):
 
         peer_uuid = self.get_peer_uuid(peer_spec)
         self.run_ceph_cmd("fs", "snapshot", "mirror", "peer_remove", fs_name, peer_uuid)
-        time.sleep(10)
-        # verify via asok
-        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
-                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
-        self.assertTrue(res['peers'] == {} and res['snap_dirs']['dir_count'] == 0)
-
-        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
-
-        self.assertLess(vafter["counters"]["mirroring_peers"], vbefore["counters"]["mirroring_peers"])
+        self._wait_peer_removed(fs_name, fs_id, vbefore)
 
     def bootstrap_peer(self, fs_name, client_name, site_name):
         outj = json.loads(self.get_ceph_cmd_stdout(
@@ -301,18 +353,9 @@ class TestMirroring(CephFSTestCase):
 
         self.run_ceph_cmd("fs", "snapshot", "mirror", "add", fs_name, dir_name)
 
-        time.sleep(10)
-        # verify via asok
-        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
-                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
-        new_dir_count = res['snap_dirs']['dir_count']
-        log.debug(f'new dir_count={new_dir_count}')
-        self.assertTrue(new_dir_count > dir_count)
-
-        if check_perf_counter:
-            res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-            vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
-            self.assertGreater(vafter["counters"]["directory_count"], vbefore["counters"]["directory_count"])
+        self._wait_directory_added(fs_name, fs_id, dir_count,
+                                   vbefore if check_perf_counter else None,
+                                   check_perf_counter)
 
     def remove_directory(self, fs_name, fs_id, dir_name):
         res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
@@ -325,18 +368,7 @@ class TestMirroring(CephFSTestCase):
 
         self.run_ceph_cmd("fs", "snapshot", "mirror", "remove", fs_name, dir_name)
 
-        time.sleep(10)
-        # verify via asok
-        res = self.mirror_daemon_command(f'mirror status for fs: {fs_name}',
-                                         'fs', 'mirror', 'status', f'{fs_name}@{fs_id}')
-        new_dir_count = res['snap_dirs']['dir_count']
-        log.debug(f'new dir_count={new_dir_count}')
-        self.assertTrue(new_dir_count < dir_count)
-
-        res = self.mirror_daemon_command(f'counter dump for fs: {fs_name}', 'counter', 'dump')
-        vafter = res[TestMirroring.PERF_COUNTER_KEY_NAME_CEPHFS_MIRROR_FS][0]
-
-        self.assertLess(vafter["counters"]["directory_count"], vbefore["counters"]["directory_count"])
+        self._wait_directory_removed(fs_name, fs_id, dir_count, vbefore)
 
     @retry_assert(timeout=140, interval=2)
     def check_mirror_status_after_failure(self):
@@ -1120,13 +1152,8 @@ class TestMirroring(CephFSTestCase):
         try:
             self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir1}')
             self.add_directory(self.primary_fs_name, self.primary_fs_id, f'/{dir2}')
-            time.sleep(10)
-            dirs_list = json.loads(self.get_ceph_cmd_stdout("fs", "snapshot", "mirror", "ls", self.primary_fs_name))
-            # verify via asok
-            res = self.mirror_daemon_command(f'mirror status for fs: {self.primary_fs_name}',
-                                             'fs', 'mirror', 'status', f'{self.primary_fs_name}@{self.primary_fs_id}')
-            dir_count = res['snap_dirs']['dir_count']
-            self.assertTrue(len(dirs_list) == dir_count and f'/{dir1}' in dirs_list and f'/{dir2}' in dirs_list)
+            self._wait_mirror_directory_ls(
+                self.primary_fs_name, self.primary_fs_id, f'/{dir1}', f'/{dir2}')
         except CommandFailedError:
             raise RuntimeError('Error listing directories')
         except AssertionError:

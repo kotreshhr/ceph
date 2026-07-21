@@ -3114,6 +3114,7 @@ class TestMirroring(CephFSTestCase):
 
     def test_cephfs_mirror_sync_stat_omap_removed_on_disable(self):
         """mirror disable purges persisted sync-stat omap entries."""
+        self.skipTest("temporarily disable test: snapdiff bug - see https://tracker.ceph.com/issues/74984")
         _peer_spec, peer_uuid, _dir_path = self.setup_sync_stat_omap(
             dir_name='sync_stat_omap_disable')
         keys_before = self.list_sync_stat_omap_keys(

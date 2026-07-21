@@ -35,6 +35,8 @@ public:
   void add_peer(const Peer &peer);
   void remove_peer(const Peer &peer);
 
+  void remove_persisted_dir_sync_stats();
+
   bool is_stopping() {
     std::scoped_lock locker(m_lock);
     return m_stopping;

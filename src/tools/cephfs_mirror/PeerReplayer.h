@@ -49,6 +49,9 @@ public:
   // remove a directory from queue
   void remove_directory(std::string_view dir_root, bool purging = false);
 
+  // remove persisted sync-stat omap entries for all tracked directories
+  void remove_persisted_dir_sync_stats();
+
   // admin socket helpers
   void peer_status(Formatter *f);
 

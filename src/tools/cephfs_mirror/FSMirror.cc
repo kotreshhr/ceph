@@ -411,6 +411,14 @@ void FSMirror::handle_release_directory(string_view dir_path, bool purging) {
   }
 }
 
+void FSMirror::remove_persisted_dir_sync_stats() {
+  std::scoped_lock locker(m_lock);
+  for (auto &[peer, replayer] : m_peer_replayers) {
+    dout(5) << ": removing persisted sync stats for peer=" << peer << dendl;
+    replayer->remove_persisted_dir_sync_stats();
+  }
+}
+
 void FSMirror::add_peer(const Peer &peer) {
   dout(10) << ": peer=" << peer << dendl;
 
@@ -452,6 +460,7 @@ void FSMirror::remove_peer(const Peer &peer) {
   }
 
   if (replayer) {
+    replayer->remove_persisted_dir_sync_stats();
     dout(5) << ": shutting down replayers for peer=" << peer << dendl;
     shutdown_replayer(replayer.get());
   }

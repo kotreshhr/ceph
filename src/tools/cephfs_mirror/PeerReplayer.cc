@@ -2,6 +2,7 @@
 // vim: ts=8 sw=2 sts=2 expandtab
 
 #include <stack>
+#include <vector>
 #include <fcntl.h>
 #include <algorithm>
 #include <sys/time.h>
@@ -797,6 +798,21 @@ void PeerReplayer::remove_directory(string_view dir_root, bool purging) {
 
   if (persist_idle) {
     persist_dir_sync_stat(_dir_root);
+  }
+}
+
+void PeerReplayer::remove_persisted_dir_sync_stats() {
+  std::vector<std::string> dir_roots;
+  {
+    std::scoped_lock locker(m_lock);
+    dir_roots.reserve(m_snap_sync_stats.size());
+    for (const auto &[dir_root, _] : m_snap_sync_stats) {
+      dir_roots.push_back(dir_root);
+    }
+  }
+
+  for (const auto &dir_root : dir_roots) {
+    remove_persisted_dir_sync_stat(dir_root);
   }
 }
 

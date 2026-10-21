@@ -1707,6 +1707,14 @@ class TestMirroring(CephFSTestCase):
         dir_name = dir_path.lstrip('/')
         peer_spec = "client.mirror_remote@ceph"
 
+        # Retain all COMPLETE checkpoints for this notify-focused test.
+        # Default cephfs_mirror_checkpoint_keep_count (10) would prune the
+        # list while snaps are still being added/synced.
+        self.config_set('client.mirror', 'cephfs_mirror_checkpoint_keep_count',
+                        snap_count)
+        self.addCleanup(self.config_rm, 'client.mirror',
+                        'cephfs_mirror_checkpoint_keep_count')
+
         self.enable_mirroring(self.primary_fs_name, self.primary_fs_id)
         self.peer_add(self.primary_fs_name, self.primary_fs_id, peer_spec,
                       self.secondary_fs_name)
